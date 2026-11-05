@@ -61,6 +61,16 @@ struct VideoMetadataTests {
         #expect(metadata.captureDate == nil)
     }
 
+    @Test("A date of zero in Unix time, or earlier, means none. Found on real files")
+    func unixZeroDate() throws {
+        for created in [2_082_844_800, 1_500_000_000] as [UInt64] {
+            var options = SyntheticMedia.MovieOptions()
+            options.created = created
+            let metadata = try #require(try read(SyntheticMedia.movie(options)))
+            #expect(metadata.captureDate == nil)
+        }
+    }
+
     @Test("A long video needs only its box headers and movie box")
     func readsLittle() throws {
         var options = SyntheticMedia.MovieOptions()

@@ -52,7 +52,9 @@ enum VideoMetadataReader {
                 if header.timescale > 0, header.duration > 0, header.duration != .max, header.duration != UInt32.max {
                     metadata.durationSeconds = Double(header.duration) / Double(header.timescale)
                 }
-                if header.created > 0, let seconds = Int64(exactly: header.created) {
+                // Some encoders write zero in Unix time here, or Unix time itself, and both mean no real
+                // date. Nothing recorded on video predates 1970 in practice, so those count as missing.
+                if let seconds = Int64(exactly: header.created), seconds > epochOffset {
                     metadata.captureDate = CaptureDate(
                         wallClockMilliseconds: (seconds - epochOffset) * 1000, utcOffsetMinutes: 0)
                 }

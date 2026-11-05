@@ -2,7 +2,7 @@
 
 Photon is a native macOS browser for photos and videos stored in local folders and on removable media. This document records the product scope, architecture, milestones and open risks.
 
-**Status:** Milestone 1 is built and tested on disk images. Spike code lives in [`Spikes/`](../Spikes/README.md), and results are under [Milestone 0 spikes](#milestone-0-spikes) and [Milestone 1 results](#milestone-1-results).
+**Status:** Milestone 1 is built, and it indexed the T7 Touch read-only. Milestone 2 is next. Spike code lives in [`Spikes/`](../Spikes/README.md), and results are under [Milestone 0 spikes](#milestone-0-spikes) and [Milestone 1 results](#milestone-1-results).
 
 ## Product scope
 
@@ -418,19 +418,37 @@ The tool was first validated on an exFAT disk image, and those numbers are in `S
 
 ### Milestone 1 results
 
-Measured with a release build on a 14 GB exFAT disk image, mounted read-only, on the M4 Max's internal SSD. The library was 20,000 synthetic files totaling 10 GB. These numbers show what the pipeline costs, not how fast a drive is, so they don't replace [Spike 4](#spike-4-external-drive-throughput).
+Measured with a release build at 4 jobs, on the real T7 Touch mounted read-only, over all of `Photos`. The drive wasn't remounted first, so the enumeration time may include cached directory data.
 
-| Run | Enumerate | Read | Files opened | Bytes read |
+| T7 Touch, `Photos` | Enumerate | Read | Files opened | Bytes read |
 |---|---|---|---|---|
-| First index | 0.47 s | 11.15 s, 1,794 files/s | 20,000 | 6.9 GB |
-| Rescan, nothing changed | 0.10 s | None | 0 | 0 |
+| First index, 29,052 files | 0.52 s | 78.3 s, 371 files/s | 29,052 | 24.4 GB |
+| Rescan, nothing changed | 0.15 s | None | 0 | 0 |
 
-- The library file took 5.9 MB, about 300 bytes per file.
-- Identical files collapsed as designed: 799 duplicates merged into existing assets, leaving 19,201.
-- A `diskutil unmount` from outside the process succeeded during a run, which ended as `volumeOffline` with no failures.
+That's about 4.5 minutes per 100k files for this mix of files, for metadata and hashing together. It doesn't include thumbnails, which Spike 4 suggests will be the slow stage.
+
+- There were no failures, and every file was hashed. Exact duplicates merged as designed: 1,817 files joined existing assets, leaving 27,235.
+- The library file took 9.6 MB, about 330 bytes per file.
+- Metadata coverage, with the full read for HEIC working as planned:
+
+| Type | Files | Missing dimensions | Missing capture date |
+|---|---|---|---|
+| JPEG | 24,214 | 3 | 826 |
+| MP4 | 3,693 | 0 | 127 |
+| HEIC | 1,044 | 0 | 0 |
+| MOV | 94 | 0 | 0 |
+| PNG | 7 | 0 | 7 |
+
+The run found one bug that synthetic files missed. Two videos declared a creation time of zero in Unix time, which read as 1970. Such dates now count as missing, and that fix came after this run.
+
+As a second measure of what the pipeline itself costs, a release build read a 14 GB exFAT disk image on the internal SSD, mounted read-only, holding 20,000 synthetic files totaling 10 GB. The first index took 0.47 s to enumerate and 11.15 s to read (1,794 files/s), and a rescan took 0.10 s with no files opened.
+
+- A `diskutil unmount` from outside the process succeeded during a run on that image. The run ended as `volumeOffline` with no failures.
 - Tests on exFAT images cover changed-file rescans, read-only mounts staying byte-identical, remounts at a new path, clones, a forced detach, a normal eject and a refused unmount.
 
-**Not verified:** a physical pull of a real drive, which is a Milestone 4 test.
+**Not verified:** a rescan of real changes on the T7 Touch, because it stayed read-only, so that's shown on disk images only. Also a remount of the T7 Touch, a refusal of the drive when it's really mounted writable, which is covered by a unit test only, and a physical pull, which is a Milestone 4 test. In the app, the window was checked in light and dark mode, but adding a folder through it hasn't been tried, and ad-hoc debug builds will ask again for removable volume access.
+
+For now `LibraryIndexer` refuses any writable external volume, in the app too, so that a bug can't damage a drive before writes have been ruled out on real media. Milestone 4 should lift this, because a normal external drive is mounted writable.
 
 ## Distribution
 
