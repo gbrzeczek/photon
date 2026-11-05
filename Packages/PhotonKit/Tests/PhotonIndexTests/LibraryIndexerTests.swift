@@ -213,8 +213,8 @@ struct LibraryIndexerTests {
     func fileChangedDuringRead() async throws {
         let fixture = try Fixture()
         try fixture.folder.write("a.jpg", randomData(1000))
-        try fixture.folder.write("steady.jpg", randomData(1000, seed: 2))
-        try fixture.folder.write("steady2.jpg", randomData(1000, seed: 3))
+        try fixture.folder.write("steady.jpg", randomData(2000, seed: 2))
+        try fixture.folder.write("steady2.jpg", randomData(2000, seed: 3))
         let extractor = ChangingExtractor(
             url: fixture.folder.url.appending(path: "a.jpg"), changes: { $0 == 1000 })
         let report = try await fixture.indexer(extractor: extractor).index(path: fixture.folder.path)
@@ -317,7 +317,8 @@ private struct ChangingExtractor: MetadataExtracting {
     let url: URL
     let changes: @Sendable (Int64) -> Bool
     func metadata(kind: MediaKind, fileExtension: String, from source: any ByteSource) throws -> MediaMetadata? {
-        // The extension identifies nothing here, so this appends once and leaves other files alone.
+        // Sources don't know their path, so `changes` picks the file by size. It must match only that
+        // file: appending while reading another one races with this file's own read.
         let name = url.path
         guard changes(source.size), Self.claim(name) else { return nil }
         let handle = try FileHandle(forWritingTo: url)
