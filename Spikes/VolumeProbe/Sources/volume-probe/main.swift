@@ -1,6 +1,6 @@
 import Foundation
 
-// volume-probe snapshot <mount> <out.json> [sample]
+// volume-probe snapshot <mount> <out.json> [sample] [top-level folder...]
 // volume-probe compare <a.json> <b.json>
 // volume-probe read-across-removal <file> read|mapped|imagesource
 // volume-probe watch-unmount <file> close|hold
@@ -17,7 +17,7 @@ decoder.dateDecodingStrategy = .iso8601
 do {
     switch args.dropFirst().first {
     case "snapshot":
-        let snap = try takeSnapshot(mount: args[2], sample: args.count > 4 ? Int(args[4])! : 500)
+        let snap = try takeSnapshot(mount: args[2], sample: args.count > 4 ? Int(args[4])! : 500, folders: Array(args.dropFirst(5)))
         try encoder.encode(snap).write(to: URL(fileURLWithPath: args[3]))
         print("\(snap.volume.fsType) uuid=\(snap.volume.urlVolumeUUID ?? "nil") medium=\(snap.volume.mediumType ?? "unreported") protocol=\(snap.volume.deviceProtocol ?? "?") files=\(snap.fileCount)")
     case "compare":

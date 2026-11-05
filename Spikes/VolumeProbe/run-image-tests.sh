@@ -64,7 +64,7 @@ for fs in "${FILESYSTEMS[@]}"; do
   compare "$WORK/$tag-2.json" "$WORK/$tag-3.json"
   detach "$m"; sleep 1
 
-  section "$fs: byte-for-byte clone mounted beside the original (a cloned card)"
+  section "$fs: byte-for-byte clone mounted beside the original (a cloned drive)"
   cp "$img" "$WORK/$tag-clone.dmg"
   m=$(attach "$img"); c=$(attach "$WORK/$tag-clone.dmg")
   echo "original at $m, clone at ${c:-NOT MOUNTED}"

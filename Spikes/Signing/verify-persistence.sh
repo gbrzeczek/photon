@@ -1,6 +1,6 @@
 #!/bin/bash
 # Spike 5, the part that needs a person. Disk images aren't gated by TCC, so point this at a real
-# SD card or USB drive (it only lists the top directory). Click Allow when macOS asks.
+# USB drive (it only lists the top directory). Click Allow when macOS asks.
 # Usage: verify-persistence.sh <mount-on-real-removable-media>
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -17,10 +17,11 @@ step() { # label, sign identity, keychain, expectation
   mkdir -p "$WORK/$1"
   "$HERE/build-app.sh" "$WORK/$1" "$1" "$2" "${3:-}" >/dev/null 2>&1
   echo; echo ">>> $1: $4"
-  open -n -W "$WORK/$1/SigningProbe.app" --args "$TARGET" "$LOG"
-  tail -1 "$LOG"
-  read -r -p "Did macOS show a permission prompt for this build? [y/n] " answer
-  echo "$1: prompted=$answer" >> "$LOG"
+  before=$(wc -l < "$LOG")
+  open -n "$WORK/$1/SigningProbe.app" --args "$TARGET" "$LOG"
+  # A pending prompt blocks the probe's opendir, so the logged time shows whether one appeared.
+  for _ in $(seq 1 120); do [ "$(wc -l < "$LOG")" -gt "$before" ] && break; sleep 1; done
+  if [ "$(wc -l < "$LOG")" -gt "$before" ]; then tail -1 "$LOG"; else echo "no answer after 120 s"; pkill -f SigningProbe; fi
 }
 step self1 "$ID" "$KC" "first self-signed build. Expect a prompt: click Allow."
 step self2 "$ID" "$KC" "rebuilt, different binary, same certificate. Expect NO prompt."

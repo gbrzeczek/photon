@@ -6,6 +6,12 @@ import UniformTypeIdentifiers
 /// Writes camera-shaped JPEGs: about 17 MP after cropping, around 7 MB each, with an embedded thumbnail and EXIF date,
 /// in folders of 200. Run it only against a scratch disk image.
 func generate(root: String, count: Int) throws {
+    // The only write path in this tool. It may only ever target the scratch image from
+    // run-image-bench.sh, whatever the caller passes.
+    guard root == "/Volumes/PTHRU" else {
+        print("Refusing: generate only writes to the scratch image at /Volumes/PTHRU.")
+        exit(1)
+    }
     let width = 6000, height = 4000
     let noise = makeNoise(width: width, height: height)
     let lock = NSLock()

@@ -41,6 +41,11 @@ func report(_ stage: String, order: String, jobs: Int, done: Int, seconds: Doubl
         stage as NSString, order as NSString, jobs, done, rate, per100k,
         Double(counters.reads) / Double(max(done, 1)), Double(counters.bytes) / 1024 / Double(max(done, 1)),
         Double(counters.bytes) / 1e6 / seconds, counters.failures))
+    if !counters.failedTypes.isEmpty { print("  failed by type: \(counters.failedTypes)") }
+    let sizes = counters.sizes.sorted()
+    if !sizes.isEmpty {
+        print("  preview long edge: p10 \(sizes[sizes.count / 10]) px, median \(sizes[sizes.count / 2]) px, p90 \(sizes[sizes.count * 9 / 10]) px, of \(sizes.count) files")
+    }
 }
 
 func measureDevice(path: String, seconds: Double) throws {
@@ -122,12 +127,12 @@ case "bench":
                     let ok: Bool
                     switch stage {
                     case "hash": ok = sampledHash(reader)
-                    case "metadata": ok = metadata(reader, prefix: 256 * 1024)
-                    case "thumb-embedded": ok = embeddedThumbnail(reader, prefix: 512 * 1024, maxPixels: 512)
+                    case "metadata": ok = metadata(reader, prefix: Int(option("prefix-kb", "256"))! * 1024)
+                    case "thumb-embedded": ok = embeddedThumbnail(reader, prefix: Int(option("prefix-kb", "512"))! * 1024, maxPixels: 512)
                     case "thumb-full": ok = fullThumbnail(reader, maxPixels: 512)
                     default: fatalError("unknown stage")
                     }
-                    if !ok { counters.fail() }
+                    if !ok { counters.fail(type: (list[i].path as NSString).pathExtension.lowercased()) }
                 }
             }
             group.leave()

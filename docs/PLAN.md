@@ -16,13 +16,12 @@ Photon is a native macOS browser for photos and videos stored in local folders a
 6. Sort by date, name, size, type and duration.
 7. Keep favorites and sessions across removable media disconnects.
 8. Play a wide range of video formats and codecs.
-9. Stay smooth on large libraries, including on a slow hard drive.
+9. Stay smooth on large libraries, including on an external drive.
 10. Navigate well from the keyboard when browsing, viewing, selecting and copying.
 
 ### Target hardware and media
 
-- **Primary library:** a 2 TB external hard drive.
-- **Also common:** 128–256 GB SD cards.
+- **Primary library:** a 2 TB external USB SSD (Samsung T7 Touch, exFAT).
 - **Development machine:** Apple silicon, M4 Max.
 - **Minimum OS:** macOS 26, for the Liquid Glass system appearance.
 
@@ -84,7 +83,7 @@ Exact duplicates are several `file_instances` pointing at one asset, so they nee
 On mount:
 
 1. Read the volume UUID from DiskArbitration and look for a matching `volumes` row.
-2. Check a sample of indexed files by relative path, size and modified time. This catches a card that was reused, or a clone that has since diverged.
+2. Check a sample of indexed files by relative path, size and modified time. This catches a drive that was reused, or a clone that has since diverged.
 3. If the sample matches, bring the volume online and restore its sessions.
 4. If it doesn't, treat it as a new volume. Assets reattach as files are hashed.
 5. Rescan incrementally, skipping files whose path, size and modified time are unchanged.
@@ -94,11 +93,12 @@ Rules that follow from this:
 - Paths are stored relative to the volume root, because mount paths change (`/Volumes/Foo 1`).
 - Bookmarks and file IDs are not used for identity. Bookmarks have been reported to break on exFAT. exFAT and FAT32 file IDs survive remounts, renames and moves on disk images, but they are reused for unrelated files after a delete, and exFAT IDs behaved like start clusters.
 - A byte-for-byte clone is indistinguishable from its original: same UUID, file IDs, sizes and dates. It's harmless when mounted alone, because it is the same content. When two volumes with one UUID are mounted together, Photon must keep them apart by BSD name for the session, and must not bring a second copy online as the same `volumes` row.
+- Don't use `isRemovable` or `isEjectable` to recognize external media. The T7 Touch reports both as false, and it reports no persistent ID support.
 - Don't use `URLResourceKey.volumeUUIDStringKey` for identity. On FAT32 it returned a different UUID for a second mount of a clone, while DiskArbitration stayed stable.
 - On `willUnmount`, cancel all work and close every file handle so that ejecting succeeds. An open handle does block the unmount. `willUnmount` also fires before an unmount that then fails, so if no `didUnmount` follows, the volume is still mounted and work must resume.
 - Reads on removable media must not be memory-mapped, because pulling the drive during a mapped read crashes the process (SIGBUS confirmed on a disk image). Ordinary reads return `EIO` immediately. Load bytes with ordinary reads and hand them to `CGImageSource`.
-- Read-only volumes are normal: locked SD cards and NTFS drives. Rename and Move to Trash are disabled there.
-- A sleeping hard drive can take seconds to spin up, so the UI needs a calm waiting state.
+- Read-only volumes are normal: NTFS drives, and volumes mounted read-only. Rename and Move to Trash are disabled there.
+- A sleeping drive can take a moment to wake, so the UI needs a calm waiting state.
 
 ### Indexing
 
@@ -118,11 +118,15 @@ Each volume has its own I/O scheduler, with these priorities:
 4. Background metadata
 5. Background thumbnails and hashing
 
-Hard drives get a concurrency of 1–2, and background reads run in directory order to reduce seeking. Faster media gets higher concurrency.
+The primary drive is an SSD, so each volume starts at a concurrency of 4. Throughput stopped growing there on metadata, and read order made little difference (about 5%). Background reads don't need special ordering.
 
-First-time indexing should take around 1–2 hours per 100k photos on the hard drive. That is still a projection, because the real drive hasn't been measured (see [Spike 4](#spike-4-hard-drive-throughput)). The app must stay fully usable throughout.
+First-time indexing takes about 30 minutes per 100k photos at full speed, and about an hour at a single job, which suits background work. These figures come from [Spike 4](#spike-4-external-drive-throughput) on the T7 Touch, scaled from a sample of files averaging 3.9 MB. The app must stay fully usable throughout.
 
-Enumeration is not the bottleneck: `getattrlistbulk` was about 23 times faster than `FileManager`. Seeks are, so reads for one file should be combined where possible, and the hash's head chunk can come from the same read as metadata and the embedded preview.
+- A full read is the expensive step, so the hash, metadata and thumbnail for a photo should all come from that one read.
+- Enumeration is not the bottleneck, at about 1 second per 100k files from cold.
+- Embedded previews are mostly 160 px, too small for standard thumbnails. They are 12 times faster, so they fill tiles first, and a full decode then replaces them.
+- HEIC metadata can't be read from a partial file through ImageIO, so HEIC files need a full read or a parser of our own.
+- Video thumbnails haven't been measured.
 
 ### Thumbnails and memory
 
@@ -255,7 +259,7 @@ Budgets are tracked with `os_signpost` and automated performance tests on a synt
 |---|---|---|
 | 0 | **Spikes** (below) | Grid approach and video engine chosen on measured results |
 | 1 | **Foundation:** packages, CI, schema, scanner, metadata | A real drive indexes in the background, and rescans touch only changed files |
-| 2 | **Grid:** thumbnails, fluid tile size, list view, sorting, selection, keyboard navigation | Budgets met on a 100k library, on the hard drive, and arrow-key navigation and selection work in grid and list |
+| 2 | **Grid:** thumbnails, fluid tile size, list view, sorting, selection, keyboard navigation | Budgets met on a 100k library, on the external drive, and arrow-key navigation and selection work in grid and list |
 | 3 | **Viewer:** progressive loading, zoom, HDR, transitions, copy and drag, keyboard control | Your place is always kept, copy works in every mode, and the viewer can be navigated from the keyboard |
 | 4 | **Removable media:** mount handling, offline mode, session restore, eject | Passes the drive-pull and reconnect tests |
 | 5 | **Organization:** favorites, albums, tags, smart albums, search, stacks | Favorites survive moving a library to a new drive |
@@ -273,9 +277,9 @@ The schema work in Milestone 1 includes the identity model and stacks, even thou
 |---|---|---|
 | 1 | Grid zoom and navigation | Decided: `CALayer` grid. Real trackpad and VoiceOver checks remain |
 | 2 | libmpv embedding | Open, in progress |
-| 3 | Volume identity | Disk images done. Real hard drive and SD cards not tested |
-| 4 | Hard drive throughput | Tool done and validated. Real hard drive not tested |
-| 5 | Signing | Mechanism confirmed. Permission prompt not tested, needs real media |
+| 3 | Volume identity | Done on the T7 Touch and disk images, except a physical pull |
+| 4 | External drive throughput | Done on the T7 Touch, except video thumbnails |
+| 5 | Signing | Done: the grant persisted across rebuilds on the T7 Touch |
 
 Scripts and raw results are in [`Spikes/`](../Spikes/README.md). They ran on macOS 27.0.1 on an M4 Max.
 
@@ -302,11 +306,20 @@ Both Instruments figures leave out one startup hitch of about 100 ms that each b
 
 #### Spike 2: libmpv embedding
 
-Open. A separate session is working on this. A MPVKit build was blocked by a permission check, so the choice of dependency is waiting on a decision. The AVFoundation and libmpv plan stands, and VLCKit remains the backup.
+Open, in progress in a separate session. The AVFoundation and libmpv plan stands, and VLCKit remains the backup.
 
 #### Spike 3: Volume identity
 
-Run on disk images. `hdiutil detach -force` stands in for a pulled cable, so it shows what a process sees, not the delays of a real USB failure.
+Run on the real T7 Touch, read-only, and on disk images. Disk images use the same FSKit exFAT driver as the drive. `hdiutil detach -force` stands in for a pulled cable, so it shows what a process sees, not the delays of a real USB failure.
+
+| T7 Touch, 30,524 files in `Photos` and `GoPro` | Result |
+|---|---|
+| Volume UUID across repeated remounts | Same |
+| Volume UUID across a physical reconnect, USB 2 to USB 3 link | Same |
+| File ID, size and modified time across a remount | Same for all 30,524 files |
+| `isRemovable`, `isEjectable`, `supportsPersistentIDs` | All false |
+| Medium type | "Solid State" at USB 3, not reported at USB 2 |
+
 
 | Behavior | exFAT | FAT32 | HFS+ | APFS |
 |---|---|---|---|---|
@@ -326,38 +339,42 @@ Run on disk images. `hdiutil detach -force` stands in for a pulled cable, so it 
 | Unmount with a handle closed on `willUnmount` | Succeeded about 220 ms later |
 | Unmount with a handle held open | Refused, and `willUnmount` had already fired |
 
-**Still needed on the real drive and SD cards:** UUID stability across reconnects and ports, whether the USB bridge reports the medium as rotational (needed to pick the hard drive I/O policy, and disk images report nothing), real pull behavior, and how long a failing read can block. FAT32 stores local time, so modified times could shift when the time zone changes. That would affect the file sample in step 2, and it hasn't been tested.
+**Not tested:** a physical pull of the drive, which was left out to protect the data on it, and is a Milestone 4 test on a drive holding nothing important. File IDs across a physical reconnect were not compared, only across remounts. Whether modified times shift on exFAT when the time zone changes is also untested, and that would affect the file sample in step 2.
 
-#### Spike 4: Hard drive throughput
+#### Spike 4: External drive throughput
 
-The tool is built and validated, but **there are no hard drive numbers yet**. Measured on an exFAT disk image on the internal SSD, with 1,500 synthetic 17 MP JPEGs of about 7 MB and a 65,000-file tree. Because the host caches the image, these rates say nothing about a hard drive beyond CPU cost and read counts.
+Measured on the 2 TB Samsung T7 Touch at a 5 Gb/s USB link, read-only, reading a sample of `Photos`. All reads were uncached, and most runs started from a fresh mount. The Spike 2 session may have been running at the same time.
 
-| Stage | Reads per file | Data per file | Measured here |
-|---|---|---|---|
-| Enumerate, `getattrlistbulk` | About one per directory | None | 0.9 s per 100k files |
-| Enumerate, `FileManager` | | None | 20.8 s per 100k files |
-| Sampled hash | 3 | 192 KB | CPU cost negligible |
-| Metadata from a prefix | 1 | 256 KB | No failures |
-| Embedded thumbnail from a prefix | 1 | 512 KB | No failures, but synthetic previews are small |
-| Full decode to 512 px | 1 | 7.1 MB | 33 ms of CPU per file, 6.4 times faster on 8 threads |
-
-**Projection, not a measurement.** Assuming 10 ms per seek and 120 MB/s:
-
-| Stage | Hours per 100k photos |
+| Device | Result |
 |---|---|
-| Metadata and embedded preview, one 512 KB read | About 0.4 |
-| Sampled hash, 3 seeks | About 0.9 |
-| Full decode, when no usable preview exists | About 2 |
+| Sequential read | 359 MB/s |
+| Random 4 KB read | 2,645 IOPS, median 0.37 ms, p99 0.96 ms |
 
-If most files have no usable preview, hashing plus full decodes comes to about 3 hours, above the 1–2 hours from combining the first two rows. Camera previews need checking too: Photon needs two thumbnail sizes, and small EXIF thumbnails may not cover the larger one.
+| Stage | Data per file | 1 job, files/s | 4 jobs, files/s | 8 jobs, files/s | Hours per 100k at 4 jobs |
+|---|---|---|---|---|---|
+| Sampled hash | 191 KB | 369 | 1,180 | Not run | 0.02 |
+| Metadata from a prefix | 255 KB | 465 | 1,626 | 1,654 | 0.02 |
+| Embedded preview from a prefix | 505 KB | 268 | 770 | 839 | 0.04 |
+| Full read and decode to 512 px | 3.9 MB | 26 | 61 | 74 | 0.46 |
 
-`throughput device` measures the drive's real sequential speed and seek rate. `throughput bench --order fileid` tests one idea that the disk image can't: on exFAT, sorting reads by file ID may follow on-disk order and cut seeks. That would be a read-order hint only, never identity.
+| Enumeration, cold | Time |
+|---|---|
+| `getattrlistbulk`, `Photos` | 1.1 s per 100k files |
+| `FileManager`, `Photos` | 8.0 s per 100k files |
+
+- **Read order:** directory, file ID and random order gave 371, 375 and 354 files/s when hashing, so ordering isn't worth building for this drive.
+- **Embedded previews:** median 160 px, and at least 10% are 512 px or larger. 137 of 3,000 files gave no preview from the prefix, nearly all HEIC.
+- **HEIC:** all 126 metadata failures out of 3,000 were HEIC. A 4 MB prefix still failed for 48 files.
+- **Not measured:** video thumbnails, which matter for `GoPro`, and any file outside `Photos`. Hashing video was not measured separately.
+
+The tool was first validated on an exFAT disk image, and those numbers are in `Spikes/Throughput/results/image-bench.txt`.
 
 #### Spike 5: Signing
 
-- **Confirmed:** a self-signed certificate gives a designated requirement of bundle identifier plus certificate, which stayed identical across rebuilds with different binaries. Ad-hoc signing gives a `cdhash` requirement, which changed on every build. TCC should therefore keep a self-signed app's grant, and this explains the plan's reason for avoiding ad-hoc signing.
-- **Confirmed:** `codesign` works with an untrusted certificate when given its SHA-1 hash and keychain, so CI doesn't need to trust it. Local builds ran, even though `spctl` rejects them.
-- **Not confirmed:** that the removable-volume grant actually persists. Disk images aren't gated by TCC at all: a probe listed one with no prompt. This needs a real card or USB drive and one click on Allow, using `Spikes/Signing/verify-persistence.sh`.
+- **Confirmed on real media:** a removable-volume grant survives rebuilds with a self-signed certificate. On the T7 Touch, the first build waited 25 seconds on the Allow prompt, and two rebuilds with different binaries then read the drive in 11–30 ms with no prompt. As a control, ad-hoc builds blocked again on each build, for 2.5 and 1.1 seconds. Prompts were inferred from that blocking time.
+- **Why it works:** a self-signed certificate gives a designated requirement of bundle identifier plus certificate, which stayed identical across rebuilds. Ad-hoc signing gives a `cdhash` requirement, which changes on every build.
+- **Also confirmed:** `codesign` works with an untrusted certificate when given its SHA-1 hash and keychain, so CI doesn't need to trust it. Local builds ran, even though `spctl` rejects them.
+- **Testing note:** disk images aren't gated by TCC at all, so this check always needs a real drive.
 
 ## Distribution
 
@@ -397,7 +414,7 @@ Check model licenses before distributing. InsightFace's pretrained models are no
 | Hand-built grid costs more than expected | `CALayer` grid chosen knowingly. Selection, drag and accessibility are built with the grid, not added later |
 | libmpv embedding is unstable | Spike 2, open, with VLCKit as backup |
 | Volume UUIDs change or collide without a marker file | File sampling on mount, hash-based reattachment, and separate handling of two mounted volumes with one UUID |
-| First-time indexing is slow on the hard drive | Priority scheduling, resumable stages, visible tiles first, combined reads. Spike 4 needs the real drive |
-| Self-signed permission doesn't persist | Requirement is stable, but the prompt is untested. Check on real media before relying on it |
+| First-time indexing takes tens of minutes | Priority scheduling, resumable stages, visible tiles first, one read per file |
+| A slower link caps throughput | The T7 Touch linked at USB 2 speed on one connection. Worth showing in the UI if indexing is slow |
 | Thumbnail cache grows too large | Size limit, with two-tier eviction |
 | Drive removed during a read | No mapped reads, cancellation, physical drive-pull tests |

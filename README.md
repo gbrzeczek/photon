@@ -21,7 +21,7 @@ Your files stay where they are. Photon doesn't import them, and it doesn't write
 - **Sorting:** by date, name, size, type and duration.
 - **Removable media support:** unplug a drive and still browse its thumbnails, favorites and albums. Reconnect it and carry on where you left off, even if it mounts under a different name.
 - **Wide video support:** common formats through AVFoundation, and formats like MKV and WebM through a bundled fallback player.
-- **Performance:** built to stay smooth on large libraries, including on a slow external hard drive.
+- **Performance:** built to stay smooth on large libraries, including on an external drive.
 
 ### Later
 

@@ -84,15 +84,17 @@ func mediumType(bsdName: String) -> String? {
     return (found as? [String: Any])?["Medium Type"] as? String
 }
 
-func takeSnapshot(mount: String, sample: Int) throws -> Snapshot {
+/// `folders` limits the walk to top-level folders, so unrelated data on a drive is never listed.
+func takeSnapshot(mount: String, sample: Int, folders: [String]) throws -> Snapshot {
     let volume = try readVolume(mount)
-    let root = URL(fileURLWithPath: mount, isDirectory: true)
     var files: [Snapshot.File] = []
     var count = 0
-    let walker = FileManager.default.enumerator(
+    for folder in folders.isEmpty ? [""] : folders {
+      let root = URL(fileURLWithPath: mount, isDirectory: true).appendingPathComponent(folder, isDirectory: true)
+      let walker = FileManager.default.enumerator(
         at: root, includingPropertiesForKeys: nil,
         options: [.skipsHiddenFiles, .skipsPackageDescendants])
-    while let item = walker?.nextObject() as? URL {
+      while let item = walker?.nextObject() as? URL {
         var st = stat()
         guard lstat(item.path, &st) == 0, (st.st_mode & S_IFMT) == S_IFREG else { continue }
         count += 1
@@ -107,6 +109,7 @@ func takeSnapshot(mount: String, sample: Int) throws -> Snapshot {
         } else if Int.random(in: 0..<count) < sample {
             files[Int.random(in: 0..<sample)] = entry
         }
+      }
     }
     files.sort { $0.path < $1.path }
     return Snapshot(takenAt: Date(), volume: volume, fileCount: count, files: files)

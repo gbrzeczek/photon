@@ -1,6 +1,6 @@
 #!/bin/bash
 # Spike 4 on scratch exFAT images. These numbers validate the tool and show CPU cost per file.
-# They are NOT hard drive numbers. Usage: run-image-bench.sh <scratch-dir> [photo-count] [enum-count]
+# They are NOT real drive numbers. Usage: run-image-bench.sh <scratch-dir> [photo-count] [enum-count]
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BIN="$HERE/.build/release/throughput"

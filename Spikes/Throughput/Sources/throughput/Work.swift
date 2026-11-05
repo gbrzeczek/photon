@@ -9,8 +9,12 @@ final class Counters: @unchecked Sendable {
     private(set) var reads = 0
     private(set) var bytes: Int64 = 0
     private(set) var failures = 0
+    private(set) var sizes: [Int] = []
+    func note(size: Int) { lock.withLock { sizes.append(size) } }
     func add(reads r: Int, bytes b: Int64) { lock.withLock { reads += r; bytes += b } }
     func fail() { lock.withLock { failures += 1 } }
+    private(set) var failedTypes: [String: Int] = [:]
+    func fail(type: String) { lock.withLock { failures += 1; failedTypes[type, default: 0] += 1 } }
 }
 
 /// Ordinary uncached reads, never mapped, as AGENTS.md requires on removable media.
@@ -76,7 +80,9 @@ func embeddedThumbnail(_ reader: Reader, prefix: Int, maxPixels: Int) -> Bool {
         kCGImageSourceThumbnailMaxPixelSize: maxPixels,
         kCGImageSourceCreateThumbnailWithTransform: true,
     ]
-    return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) != nil
+    guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return false }
+    reader.counters.note(size: max(image.width, image.height))
+    return true
 }
 
 /// The slow path: read everything, then scale the full image down.

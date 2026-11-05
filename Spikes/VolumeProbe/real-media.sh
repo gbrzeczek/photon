@@ -1,12 +1,12 @@
 #!/bin/bash
-# Spike 3 on a real drive or card. Nothing here writes to the volume. Results stay in
+# Spike 3 on a real drive. Nothing here writes to the volume. Results stay in
 # ~/PhotonSpikeResults, because they contain file names and must not be committed.
 #
-#   real-media.sh snapshot <mount> <label>   Record identity. Run, eject, reconnect, run again.
+#   real-media.sh snapshot <mount> <label> [folder...]   Record identity. Run, reconnect, run again.
 #   real-media.sh compare <label-a> <label-b>
 #   real-media.sh pull <mount> <big-file>    Read loop for pulling the cable. Needs a read-only mount.
 #
-# Mount read-only first, so that a pull can't damage the filesystem and macOS adds nothing:
+# Mount read-only first, so that nothing can write to the volume and macOS adds nothing:
 #   diskutil unmount <mount>
 #   diskutil mount readOnly <device, for example disk5s1>
 set -euo pipefail
@@ -17,7 +17,8 @@ OUT="$HOME/PhotonSpikeResults"; mkdir -p "$OUT"
 
 case "${1:-}" in
 snapshot)
-  "$PROBE" snapshot "$2" "$OUT/$3.json" 2000 ;;
+  mount="$2"; label="$3"; shift 3
+  "$PROBE" snapshot "$mount" "$OUT/$label.json" 2000 "$@" ;;
 compare)
   "$PROBE" compare "$OUT/$2.json" "$OUT/$3.json" | tee "$OUT/compare-$2-$3.txt" ;;
 pull)
