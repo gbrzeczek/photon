@@ -3,7 +3,7 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
-/// Writes camera-shaped JPEGs: 24 MP, a few MB each, with an embedded thumbnail and EXIF date,
+/// Writes camera-shaped JPEGs: about 17 MP after cropping, around 7 MB each, with an embedded thumbnail and EXIF date,
 /// in folders of 200. Run it only against a scratch disk image.
 func generate(root: String, count: Int) throws {
     let width = 6000, height = 4000
