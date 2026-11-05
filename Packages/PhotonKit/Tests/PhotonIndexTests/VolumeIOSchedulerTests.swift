@@ -1,6 +1,5 @@
 import Foundation
 import PhotonCore
-import Synchronization
 import Testing
 
 @testable import PhotonIndex
@@ -112,16 +111,16 @@ struct VolumeIOSchedulerTests {
         try folder.write("a.bin")
         let scheduler = VolumeIOScheduler(mountPoint: folder.path, concurrency: 1)
         let gate = Gate()
-        let order = Mutex<[String]>([])
-        let started = Atomic<Bool>(false)
+        let order = SharedList()
+        let started = SharedFlag()
 
         let blocker = Task {
             try await scheduler.withFile(fileName("a.bin"), priority: .backgroundWork) { _ in
-                started.store(true, ordering: .sequentiallyConsistent)
+                started.set()
                 gate.wait()
             }
         }
-        #expect(try await eventually { started.load(ordering: .sequentiallyConsistent) })
+        #expect(try await eventually { started.isSet })
 
         let requests: [(String, IOPriority)] = [
             ("work-1", .backgroundWork), ("metadata", .backgroundMetadata), ("hash", .userHash),
@@ -129,23 +128,21 @@ struct VolumeIOSchedulerTests {
         ]
         var tasks: [Task<Void, any Error>] = []
         for (label, priority) in requests {
-            let queuedBefore = tasks.count
             tasks.append(
                 Task {
                     try await scheduler.withFile(fileName("a.bin"), priority: priority) { _ in
-                        order.withLock { $0.append(label) }
+                        order.append(label)
                     }
                 })
             // Let each one reach the queue, so the test isn't at the mercy of task start order.
             try await Task.sleep(for: .milliseconds(20))
-            _ = queuedBefore
         }
 
         gate.open()
         try await blocker.value
         for task in tasks { try await task.value }
         #expect(
-            order.withLock { $0 } == ["visible-1", "visible-2", "ahead", "hash", "metadata", "work-1", "work-2"])
+            order.values == ["visible-1", "visible-2", "ahead", "hash", "metadata", "work-1", "work-2"])
     }
 
     @Test("A volume never runs more than its concurrency")
@@ -153,23 +150,21 @@ struct VolumeIOSchedulerTests {
         let folder = try TemporaryFolder()
         try folder.write("a.bin")
         let scheduler = VolumeIOScheduler(mountPoint: folder.path, concurrency: 3)
-        let running = Atomic<Int>(0)
-        let peak = Atomic<Int>(0)
+        let meter = ConcurrencyMeter()
 
         try await withThrowingTaskGroup(of: Void.self) { group in
             for _ in 0..<60 {
                 group.addTask {
                     try await scheduler.withFile(fileName("a.bin"), priority: .backgroundWork) { _ in
-                        let now = running.add(1, ordering: .sequentiallyConsistent).newValue
-                        peak.max(now, ordering: .sequentiallyConsistent)
+                        meter.enter()
                         Thread.sleep(forTimeInterval: 0.002)
-                        running.subtract(1, ordering: .sequentiallyConsistent)
+                        meter.leave()
                     }
                 }
             }
             try await group.waitForAll()
         }
-        #expect(peak.load(ordering: .sequentiallyConsistent) == 3)
+        #expect(meter.peak == 3)
     }
 
     @Test("Cancelling a queued read fails it at once, without touching the disk")
@@ -178,14 +173,14 @@ struct VolumeIOSchedulerTests {
         try folder.write("a.bin")
         let scheduler = VolumeIOScheduler(mountPoint: folder.path, concurrency: 1)
         let gate = Gate()
-        let started = Atomic<Bool>(false)
+        let started = SharedFlag()
         let blocker = Task {
             try await scheduler.withFile(fileName("a.bin"), priority: .visible) { _ in
-                started.store(true, ordering: .sequentiallyConsistent)
+                started.set()
                 gate.wait()
             }
         }
-        #expect(try await eventually { started.load(ordering: .sequentiallyConsistent) })
+        #expect(try await eventually { started.isSet })
 
         let queued = Task { try await scheduler.withFile(fileName("a.bin"), priority: .visible) { $0.size } }
         try await Task.sleep(for: .milliseconds(20))
@@ -216,18 +211,18 @@ struct VolumeIOSchedulerTests {
         let size = VolumeIOScheduler.chunkSize * 8
         try folder.write("big.bin", randomData(size))
         let scheduler = VolumeIOScheduler(mountPoint: folder.path)
-        let started = Atomic<Bool>(false)
+        let started = SharedFlag()
         let gate = Gate()
 
         let task = Task {
             try await scheduler.withFile(fileName("big.bin"), priority: .visible) { file in
                 _ = try file.read(offset: 0, length: VolumeIOScheduler.chunkSize)
-                started.store(true, ordering: .sequentiallyConsistent)
+                started.set()
                 gate.wait()
                 return try file.read(offset: 0, length: size)
             }
         }
-        #expect(try await eventually { started.load(ordering: .sequentiallyConsistent) })
+        #expect(try await eventually { started.isSet })
         task.cancel()
         try await Task.sleep(for: .milliseconds(10))
         gate.open()
@@ -242,16 +237,16 @@ struct VolumeIOSchedulerTests {
         try folder.write("a.bin", randomData(VolumeIOScheduler.chunkSize))
         let scheduler = VolumeIOScheduler(mountPoint: folder.path, concurrency: 1)
         let gate = Gate()
-        let started = Atomic<Bool>(false)
+        let started = SharedFlag()
 
         let running = Task {
             try await scheduler.withFile(fileName("a.bin"), priority: .visible) { file in
-                started.store(true, ordering: .sequentiallyConsistent)
+                started.set()
                 gate.wait()
                 return try file.read(offset: 0, length: 16)
             }
         }
-        #expect(try await eventually { started.load(ordering: .sequentiallyConsistent) })
+        #expect(try await eventually { started.isSet })
         let queued = Task { try await scheduler.withFile(fileName("a.bin"), priority: .visible) { $0.size } }
         try await Task.sleep(for: .milliseconds(20))
 
@@ -282,14 +277,14 @@ struct VolumeIOSchedulerTests {
         let slow = VolumeIOScheduler(mountPoint: folder.path, concurrency: 1)
         let fast = VolumeIOScheduler(mountPoint: folder.path, concurrency: 1)
         let gate = Gate()
-        let started = Atomic<Bool>(false)
+        let started = SharedFlag()
         let blocked = Task {
             try await slow.withFile(fileName("a.bin"), priority: .visible) { _ in
-                started.store(true, ordering: .sequentiallyConsistent)
+                started.set()
                 gate.wait()
             }
         }
-        #expect(try await eventually { started.load(ordering: .sequentiallyConsistent) })
+        #expect(try await eventually { started.isSet })
         #expect(try await fast.withFile(fileName("a.bin"), priority: .visible) { $0.size } == 7)
         gate.open()
         try await blocked.value

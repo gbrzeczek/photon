@@ -93,6 +93,35 @@ final class PathLog: Sendable {
     }
 }
 
+// Local `Atomic` and `Mutex` values can't be captured by concurrent closures on every supported
+// compiler, because they aren't copyable. These classes give tests something shareable instead.
+
+final class SharedFlag: Sendable {
+    private let value = Atomic<Bool>(false)
+    var isSet: Bool { value.load(ordering: .sequentiallyConsistent) }
+    func set() { value.store(true, ordering: .sequentiallyConsistent) }
+}
+
+final class SharedList: Sendable {
+    private let items = Mutex<[String]>([])
+    var values: [String] { items.withLock { $0 } }
+    func append(_ item: String) { items.withLock { $0.append(item) } }
+}
+
+/// Tracks how many jobs ran at once.
+final class ConcurrencyMeter: Sendable {
+    private let running = Atomic<Int>(0)
+    private let highest = Atomic<Int>(0)
+    var peak: Int { highest.load(ordering: .sequentiallyConsistent) }
+
+    func enter() {
+        let now = running.add(1, ordering: .sequentiallyConsistent).newValue
+        highest.max(now, ordering: .sequentiallyConsistent)
+    }
+
+    func leave() { running.subtract(1, ordering: .sequentiallyConsistent) }
+}
+
 /// A condition to wait for from a test, with a limit so that a bug fails rather than hangs.
 func eventually(
     timeout: Duration = .seconds(10), _ condition: @Sendable () async throws -> Bool

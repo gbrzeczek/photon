@@ -5,7 +5,7 @@ import Testing
 @testable import PhotonCore
 
 /// A library in a temporary folder, with shortcuts for what identity tests need.
-final class TestLibrary {
+final class TestLibrary: Sendable {
     let directory: URL
     let store: LibraryStore
     let volume: VolumeID

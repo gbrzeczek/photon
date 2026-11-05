@@ -337,17 +337,17 @@ struct VolumeEventMonitorTests {
     @Test("Unmount notifications reach the handlers with their path")
     func deliversEvents() {
         let center = NotificationCenter()
-        let events = Mutex<[String]>([])
+        let events = SharedList()
         let monitor = VolumeEventMonitor(
             center: center,
-            willUnmount: { path in events.withLock { $0.append("will " + path) } },
-            didUnmount: { path in events.withLock { $0.append("did " + path) } },
-            didMount: { path in events.withLock { $0.append("mount " + path) } })
+            willUnmount: { path in events.append("will " + path) },
+            didUnmount: { path in events.append("did " + path) },
+            didMount: { path in events.append("mount " + path) })
         let info = ["NSDevicePath": "/Volumes/X"]
         center.post(name: NSNotificationNames.willUnmount, object: nil, userInfo: info)
         center.post(name: NSNotificationNames.didUnmount, object: nil, userInfo: info)
         center.post(name: NSNotificationNames.didMount, object: nil, userInfo: info)
-        #expect(events.withLock { $0 } == ["will /Volumes/X", "did /Volumes/X", "mount /Volumes/X"])
+        #expect(events.values == ["will /Volumes/X", "did /Volumes/X", "mount /Volumes/X"])
         withExtendedLifetime(monitor) {}
     }
 }

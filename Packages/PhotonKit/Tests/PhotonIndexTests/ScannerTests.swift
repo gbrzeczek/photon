@@ -7,7 +7,7 @@ import Testing
 
 @Suite("Enumeration stage")
 struct ScannerTests {
-    private struct Fixture {
+    private struct Fixture: Sendable {
         let folder: TemporaryFolder
         let storeFolder: TemporaryFolder
         let store: LibraryStore
