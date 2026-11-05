@@ -1,0 +1,27 @@
+generated 1500 files, 0 failed
+ 10G	/Volumes/PTHRU
+enumerate: 1500 files in 0.022 s, 67240 files/s, 1.5 s per 100k
+enumerate-fm: 1500 files in 0.498 s, 3012 files/s, 33.2 s per 100k
+hash order=dir jobs=1 files=1500      569.1 files/s     0.05 h/100k  reads/file 3.0  KB/file 192  MB/s 111.9  failed 0
+hash order=fileid jobs=1 files=1500      609.4 files/s     0.05 h/100k  reads/file 3.0  KB/file 192  MB/s 119.8  failed 0
+hash order=random jobs=1 files=1500      596.0 files/s     0.05 h/100k  reads/file 3.0  KB/file 192  MB/s 117.2  failed 0
+metadata order=dir jobs=1 files=1500      831.5 files/s     0.03 h/100k  reads/file 1.0  KB/file 256  MB/s 218.0  failed 0
+metadata order=dir jobs=2 files=1500     4118.8 files/s     0.01 h/100k  reads/file 1.0  KB/file 256  MB/s 1079.7  failed 0
+metadata order=dir jobs=4 files=1500     4234.7 files/s     0.01 h/100k  reads/file 1.0  KB/file 256  MB/s 1110.1  failed 0
+metadata order=dir jobs=8 files=1500     3914.1 files/s     0.01 h/100k  reads/file 1.0  KB/file 256  MB/s 1026.1  failed 0
+thumb-embedded order=dir jobs=1 files=1500      662.9 files/s     0.04 h/100k  reads/file 1.0  KB/file 512  MB/s 347.5  failed 0
+thumb-embedded order=dir jobs=2 files=1500     2509.0 files/s     0.01 h/100k  reads/file 1.0  KB/file 512  MB/s 1315.4  failed 0
+thumb-embedded order=dir jobs=4 files=1500     2950.5 files/s     0.01 h/100k  reads/file 1.0  KB/file 512  MB/s 1546.9  failed 0
+thumb-embedded order=dir jobs=8 files=1500     2863.8 files/s     0.01 h/100k  reads/file 1.0  KB/file 512  MB/s 1501.4  failed 0
+thumb-full order=dir jobs=1 files=1500       29.9 files/s     0.93 h/100k  reads/file 1.0  KB/file 7109  MB/s 217.7  failed 0
+thumb-full order=dir jobs=2 files=1500       55.7 files/s     0.50 h/100k  reads/file 1.0  KB/file 7109  MB/s 405.3  failed 0
+thumb-full order=dir jobs=4 files=1500      102.8 files/s     0.27 h/100k  reads/file 1.0  KB/file 7109  MB/s 748.5  failed 0
+thumb-full order=dir jobs=8 files=1500      190.8 files/s     0.15 h/100k  reads/file 1.0  KB/file 7109  MB/s 1388.6  failed 0
+Traceback (most recent call last):
+  File "<stdin>", line 5, in <module>
+  File "<frozen os>", line 227, in makedirs
+OSError: [Errno 28] No space left on device: '/Volumes/PENUM/DCIM/230PHOTO'
+enumerate: 65000 files in 0.577 s, 112586 files/s, 0.9 s per 100k
+enumerate: 65000 files in 0.585 s, 111074 files/s, 0.9 s per 100k
+enumerate-fm: 65000 files in 13.536 s, 4802 files/s, 20.8 s per 100k
+./run-image-bench.sh "$SCRATCH/thru"  330.43s user 25.35s system 124% cpu 4:46.14 total

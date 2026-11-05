@@ -1,0 +1,215 @@
+
+========== ExFAT ==========
+exfat uuid=FFE2FB5E-A437-38A5-A1C1-96671A367BDC medium=unreported protocol=Virtual Interface files=41
+
+### ExFAT: remount
+urlVolumeUUID: same (FFE2FB5E-A437-38A5-A1C1-96671A367BDC -> FFE2FB5E-A437-38A5-A1C1-96671A367BDC)
+daVolumeUUID: same (FFE2FB5E-A437-38A5-A1C1-96671A367BDC -> FFE2FB5E-A437-38A5-A1C1-96671A367BDC)
+daMediaUUID: same (nil -> nil)
+mountPath: same (/Volumes/PTESTExFAT -> /Volumes/PTESTExFAT)
+bsdName: same (disk4s1 -> disk4s1)
+files by path: 41 same ID, 0 changed ID, 0 not in first snapshot
+files by path: 41 same size+mtime, 0 changed
+
+### ExFAT: file IDs through file operations (each compared with the state before it)
+rename in same directory: 17 -> 17
+move across directories: 21 -> 21
+overwrite in place: 26 -> 26
+atomic replace, as editors do: 32 -> 920
+delete, then a different new file: 39 -> 943 
+renamed file after remount: 17
+moved file after remount: 21
+
+### ExFAT: is a file ID reused by unrelated content?
+deleted IDs: 47 56 66 
+new IDs: 32 37 42 47 52 57 
+RESULT: ID reused by unrelated content
+
+### ExFAT: remount after edits
+urlVolumeUUID: same (FFE2FB5E-A437-38A5-A1C1-96671A367BDC -> FFE2FB5E-A437-38A5-A1C1-96671A367BDC)
+daVolumeUUID: same (FFE2FB5E-A437-38A5-A1C1-96671A367BDC -> FFE2FB5E-A437-38A5-A1C1-96671A367BDC)
+daMediaUUID: same (nil -> nil)
+mountPath: same (/Volumes/PTESTExFAT -> /Volumes/PTESTExFAT)
+bsdName: same (disk4s1 -> disk4s1)
+files by path: 44 same ID, 0 changed ID, 0 not in first snapshot
+files by path: 44 same size+mtime, 0 changed
+
+### ExFAT: byte-for-byte clone mounted beside the original (a cloned card)
+original at /Volumes/PTESTExFAT, clone at /Volumes/PTESTExFAT 1
+urlVolumeUUID: same (FFE2FB5E-A437-38A5-A1C1-96671A367BDC -> FFE2FB5E-A437-38A5-A1C1-96671A367BDC)
+daVolumeUUID: same (FFE2FB5E-A437-38A5-A1C1-96671A367BDC -> FFE2FB5E-A437-38A5-A1C1-96671A367BDC)
+daMediaUUID: same (nil -> nil)
+mountPath: CHANGED (/Volumes/PTESTExFAT -> /Volumes/PTESTExFAT 1)
+bsdName: CHANGED (disk4s1 -> disk5s1)
+files by path: 44 same ID, 0 changed ID, 0 not in first snapshot
+files by path: 44 same size+mtime, 0 changed
+
+### ExFAT: reformat with the same name
+urlVolumeUUID: CHANGED (FFE2FB5E-A437-38A5-A1C1-96671A367BDC -> B122414E-7602-30CF-8E97-FE85BBA635E9)
+daVolumeUUID: CHANGED (FFE2FB5E-A437-38A5-A1C1-96671A367BDC -> B122414E-7602-30CF-8E97-FE85BBA635E9)
+daMediaUUID: same (nil -> nil)
+
+### ExFAT: read-only mount
+    "isReadOnly" : true,
+touch: /Volumes/PTESTExFAT/x: Read-only file system
+
+========== MS-DOS FAT32 ==========
+msdos uuid=FC16BCBE-CE59-365E-AC35-AD2138076ED6 medium=unreported protocol=Virtual Interface files=41
+
+### MS-DOS FAT32: remount
+urlVolumeUUID: same (FC16BCBE-CE59-365E-AC35-AD2138076ED6 -> FC16BCBE-CE59-365E-AC35-AD2138076ED6)
+daVolumeUUID: same (FC16BCBE-CE59-365E-AC35-AD2138076ED6 -> FC16BCBE-CE59-365E-AC35-AD2138076ED6)
+daMediaUUID: same (nil -> nil)
+mountPath: same (/Volumes/PTESTMSDOSF -> /Volumes/PTESTMSDOSF)
+bsdName: same (disk4s1 -> disk4s1)
+files by path: 41 same ID, 0 changed ID, 0 not in first snapshot
+files by path: 41 same size+mtime, 0 changed
+
+### MS-DOS FAT32: file IDs through file operations (each compared with the state before it)
+rename in same directory: 62 -> 62
+move across directories: 94 -> 94
+overwrite in place: 135 -> 135
+atomic replace, as editors do: 183 -> 7272
+delete, then a different new file: 239 -> 183 
+renamed file after remount: 62
+moved file after remount: 94
+
+### MS-DOS FAT32: is a file ID reused by unrelated content?
+deleted IDs: 303 376 456 
+new IDs: 207 247 287 327 368 408 
+RESULT: no reuse seen
+
+### MS-DOS FAT32: remount after edits
+urlVolumeUUID: same (FC16BCBE-CE59-365E-AC35-AD2138076ED6 -> FC16BCBE-CE59-365E-AC35-AD2138076ED6)
+daVolumeUUID: same (FC16BCBE-CE59-365E-AC35-AD2138076ED6 -> FC16BCBE-CE59-365E-AC35-AD2138076ED6)
+daMediaUUID: same (nil -> nil)
+mountPath: same (/Volumes/PTESTMSDOSF -> /Volumes/PTESTMSDOSF)
+bsdName: same (disk4s1 -> disk4s1)
+files by path: 44 same ID, 0 changed ID, 0 not in first snapshot
+files by path: 44 same size+mtime, 0 changed
+
+### MS-DOS FAT32: byte-for-byte clone mounted beside the original (a cloned card)
+original at /Volumes/PTESTMSDOSF, clone at /Volumes/PTESTMSDOSF 1
+urlVolumeUUID: CHANGED (FC16BCBE-CE59-365E-AC35-AD2138076ED6 -> 54A02887-3E27-46B7-81C1-B43B040ABDD9)
+daVolumeUUID: same (FC16BCBE-CE59-365E-AC35-AD2138076ED6 -> FC16BCBE-CE59-365E-AC35-AD2138076ED6)
+daMediaUUID: same (nil -> nil)
+mountPath: CHANGED (/Volumes/PTESTMSDOSF -> /Volumes/PTESTMSDOSF 1)
+bsdName: CHANGED (disk4s1 -> disk5s1)
+files by path: 44 same ID, 0 changed ID, 0 not in first snapshot
+files by path: 44 same size+mtime, 0 changed
+
+### MS-DOS FAT32: reformat with the same name
+urlVolumeUUID: CHANGED (FC16BCBE-CE59-365E-AC35-AD2138076ED6 -> ADEC017E-1819-3D67-9F95-B4AC581DF50E)
+daVolumeUUID: CHANGED (FC16BCBE-CE59-365E-AC35-AD2138076ED6 -> ADEC017E-1819-3D67-9F95-B4AC581DF50E)
+daMediaUUID: same (nil -> nil)
+
+### MS-DOS FAT32: read-only mount
+    "isReadOnly" : true,
+touch: /Volumes/PTESTMSDOSF/x: Read-only file system
+
+========== HFS+ ==========
+hfs uuid=7EA2A5BE-4E37-3CF8-82BF-01F263769CA9 medium=unreported protocol=Virtual Interface files=41
+
+### HFS+: remount
+urlVolumeUUID: same (7EA2A5BE-4E37-3CF8-82BF-01F263769CA9 -> 7EA2A5BE-4E37-3CF8-82BF-01F263769CA9)
+daVolumeUUID: same (7EA2A5BE-4E37-3CF8-82BF-01F263769CA9 -> 7EA2A5BE-4E37-3CF8-82BF-01F263769CA9)
+daMediaUUID: same (nil -> nil)
+mountPath: same (/Volumes/PTESTHFS -> /Volumes/PTESTHFS)
+bsdName: same (disk4s1 -> disk4s1)
+files by path: 41 same ID, 0 changed ID, 0 not in first snapshot
+files by path: 41 same size+mtime, 0 changed
+
+### HFS+: file IDs through file operations (each compared with the state before it)
+rename in same directory: 22 -> 22
+move across directories: 23 -> 23
+overwrite in place: 24 -> 24
+atomic replace, as editors do: 25 -> 62
+delete, then a different new file: 26 -> 63 
+renamed file after remount: 22
+moved file after remount: 23
+
+### HFS+: is a file ID reused by unrelated content?
+deleted IDs: 27 28 29 
+new IDs: 64 65 66 67 68 69 
+RESULT: no reuse seen
+
+### HFS+: remount after edits
+urlVolumeUUID: same (7EA2A5BE-4E37-3CF8-82BF-01F263769CA9 -> 7EA2A5BE-4E37-3CF8-82BF-01F263769CA9)
+daVolumeUUID: same (7EA2A5BE-4E37-3CF8-82BF-01F263769CA9 -> 7EA2A5BE-4E37-3CF8-82BF-01F263769CA9)
+daMediaUUID: same (nil -> nil)
+mountPath: same (/Volumes/PTESTHFS -> /Volumes/PTESTHFS)
+bsdName: same (disk4s1 -> disk4s1)
+files by path: 44 same ID, 0 changed ID, 0 not in first snapshot
+files by path: 44 same size+mtime, 0 changed
+
+### HFS+: byte-for-byte clone mounted beside the original (a cloned card)
+original at /Volumes/PTESTHFS, clone at /Volumes/PTESTHFS 1
+urlVolumeUUID: same (7EA2A5BE-4E37-3CF8-82BF-01F263769CA9 -> 7EA2A5BE-4E37-3CF8-82BF-01F263769CA9)
+daVolumeUUID: same (7EA2A5BE-4E37-3CF8-82BF-01F263769CA9 -> 7EA2A5BE-4E37-3CF8-82BF-01F263769CA9)
+daMediaUUID: same (nil -> nil)
+mountPath: CHANGED (/Volumes/PTESTHFS -> /Volumes/PTESTHFS 1)
+bsdName: CHANGED (disk4s1 -> disk5s1)
+files by path: 44 same ID, 0 changed ID, 0 not in first snapshot
+files by path: 44 same size+mtime, 0 changed
+
+### HFS+: reformat with the same name
+urlVolumeUUID: CHANGED (7EA2A5BE-4E37-3CF8-82BF-01F263769CA9 -> 4A829857-BBBE-34EA-B9AC-A0B84A73131C)
+daVolumeUUID: CHANGED (7EA2A5BE-4E37-3CF8-82BF-01F263769CA9 -> 4A829857-BBBE-34EA-B9AC-A0B84A73131C)
+daMediaUUID: same (nil -> nil)
+
+### HFS+: read-only mount
+    "isReadOnly" : true,
+touch: /Volumes/PTESTHFS/x: Read-only file system
+
+========== APFS ==========
+apfs uuid=D00546A1-1D9D-4210-8E46-329C8351F7B5 medium=unreported protocol=Virtual Interface files=41
+
+### APFS: remount
+urlVolumeUUID: same (D00546A1-1D9D-4210-8E46-329C8351F7B5 -> D00546A1-1D9D-4210-8E46-329C8351F7B5)
+daVolumeUUID: same (D00546A1-1D9D-4210-8E46-329C8351F7B5 -> D00546A1-1D9D-4210-8E46-329C8351F7B5)
+daMediaUUID: same (D00546A1-1D9D-4210-8E46-329C8351F7B5 -> D00546A1-1D9D-4210-8E46-329C8351F7B5)
+mountPath: same (/Volumes/PTESTAPFS -> /Volumes/PTESTAPFS)
+bsdName: same (disk5s1 -> disk5s1)
+files by path: 41 same ID, 0 changed ID, 0 not in first snapshot
+files by path: 41 same size+mtime, 0 changed
+
+### APFS: file IDs through file operations (each compared with the state before it)
+rename in same directory: 20 -> 20
+move across directories: 21 -> 21
+overwrite in place: 22 -> 22
+atomic replace, as editors do: 23 -> 60
+delete, then a different new file: 24 -> 61 
+renamed file after remount: 20
+moved file after remount: 21
+
+### APFS: is a file ID reused by unrelated content?
+deleted IDs: 25 26 27 
+new IDs: 62 63 64 65 66 67 
+RESULT: no reuse seen
+
+### APFS: remount after edits
+urlVolumeUUID: same (D00546A1-1D9D-4210-8E46-329C8351F7B5 -> D00546A1-1D9D-4210-8E46-329C8351F7B5)
+daVolumeUUID: same (D00546A1-1D9D-4210-8E46-329C8351F7B5 -> D00546A1-1D9D-4210-8E46-329C8351F7B5)
+daMediaUUID: same (D00546A1-1D9D-4210-8E46-329C8351F7B5 -> D00546A1-1D9D-4210-8E46-329C8351F7B5)
+mountPath: same (/Volumes/PTESTAPFS -> /Volumes/PTESTAPFS)
+bsdName: same (disk5s1 -> disk5s1)
+files by path: 44 same ID, 0 changed ID, 0 not in first snapshot
+files by path: 44 same size+mtime, 0 changed
+
+### APFS: byte-for-byte clone mounted beside the original (a cloned card)
+original at /Volumes/PTESTAPFS, clone at /Volumes/PTESTAPFS 1
+urlVolumeUUID: same (D00546A1-1D9D-4210-8E46-329C8351F7B5 -> D00546A1-1D9D-4210-8E46-329C8351F7B5)
+daVolumeUUID: same (D00546A1-1D9D-4210-8E46-329C8351F7B5 -> D00546A1-1D9D-4210-8E46-329C8351F7B5)
+daMediaUUID: same (D00546A1-1D9D-4210-8E46-329C8351F7B5 -> D00546A1-1D9D-4210-8E46-329C8351F7B5)
+mountPath: CHANGED (/Volumes/PTESTAPFS -> /Volumes/PTESTAPFS 1)
+bsdName: CHANGED (disk5s1 -> disk7s1)
+files by path: 44 same ID, 0 changed ID, 0 not in first snapshot
+files by path: 44 same size+mtime, 0 changed
+
+### APFS: reformat with the same name
+skipped: APFS reformat is per-container
+
+### APFS: read-only mount
+skipped: APFS mounts through a synthesized container disk
+
+done
