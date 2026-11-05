@@ -2,7 +2,7 @@
 
 Photon is a native macOS browser for photos and videos stored in local folders and on removable media. This document records the product scope, architecture, milestones and open risks.
 
-**Status:** Milestone 0 in progress. No application code exists yet. Spike code lives in [`Spikes/`](../Spikes/README.md), and results are under [Milestone 0 spikes](#milestone-0-spikes).
+**Status:** Milestone 0 decisions are made, and Milestone 1 is next. No application code exists yet. Spike code lives in [`Spikes/`](../Spikes/README.md), and results are under [Milestone 0 spikes](#milestone-0-spikes).
 
 ## Product scope
 
@@ -47,7 +47,7 @@ Cloud backup, duplicate detection and face recognition are future features (see 
 | Drive writes | None of Photon's own files. Only user-initiated rename and Move to Trash | User preference |
 | Originals | Read-only. Rotation is non-destructive and stored in the database | User preference. Also keeps content hashes stable |
 | Offline favorites | Standard thumbnails only | Can be extended later without a schema redesign |
-| Video | AVFoundation first, with a libmpv fallback, behind one interface | Best native playback, plus wide format coverage. Spike 2 is still open |
+| Video | AVFoundation first, with a libmpv fallback, behind one interface. libmpv draws through its render API into a `CAOpenGLLayer`, from our own LGPL build | Spike 2: every test format played with no dropped frames on both embedding paths, and this one needs no patched mpv |
 | Distribution | No sandbox, no App Store. Self-signed DMGs built by GitHub Actions | Personal and portfolio project, no paid program needed |
 
 ## Architecture
@@ -219,7 +219,19 @@ Space closes a photo in the viewer, so it works as a quick look toggle. For vide
 - **AVFoundation:** MOV and MP4 with H.264, HEVC, ProRes, and AV1 on Macs with a hardware decoder (M3 and later).
 - **libmpv fallback:** MKV, WebM, AVI, WMV and similar. Thumbnails for these formats use FFmpeg's libraries, so both share one dependency stack.
 
-VLCKit is the backup if libmpv embedding fails. Apple's MediaExtension framework stays an option, but each user would have to enable the extension in System Settings. Use LGPL builds of FFmpeg and mpv unless the project adopts a GPL-compatible license.
+libmpv uses `vo=libmpv` and the OpenGL render API, drawn into a `CAOpenGLLayer` tagged sRGB. OpenGL is deprecated, so the Vulkan path through MoltenVK stays as the exit. It needs a patched mpv to handle window resizes, which our own build would make possible.
+
+Apple's MediaExtension framework stays an option, but each user would have to enable the extension in System Settings. Use LGPL builds of FFmpeg and mpv unless the project adopts a GPL-compatible license.
+
+Photon needs its own build of mpv and FFmpeg, shipped as signed dylibs or frameworks. MPVKit was fine for the spike, but it can't ship: its static linking doesn't obviously meet the LGPL, it leaves out decoders the fallback exists for (such as DivX 3, DV, DNxHD and Theora), and its README says not to rely on it.
+
+`VideoEngine` must also:
+
+- Report a file as failed when `video-codec` is empty. With a missing decoder and an audio track, mpv plays audio only and raises no error.
+- Set `ao=avfoundation`, because CoreAudio output failed on planar audio.
+- Keep every mpv call off the main thread, and never wait on a draw, because Core Animation stops drawing while the display sleeps.
+- Release the GL context in the layer's `deinit`, after `mpv_render_context_free` and `mpv_terminate_destroy`. Core Animation can still display the layer after mpv is gone.
+- Decide how mpv's reads fit the disk rules. mpv opens files itself, which bypasses the per-volume I/O scheduler and its cancellation. `stream_cb.h` may solve this, and it's untested.
 
 ### Repository layout (planned)
 
@@ -276,7 +288,7 @@ The schema work in Milestone 1 includes the identity model and stacks, even thou
 | # | Spike | State |
 |---|---|---|
 | 1 | Grid zoom and navigation | Decided: `CALayer` grid. Real trackpad and VoiceOver checks remain |
-| 2 | libmpv embedding | Open, in progress |
+| 2 | libmpv embedding | Decided: render API in a `CAOpenGLLayer`. On-screen pacing and our own build remain |
 | 3 | Volume identity | Done on the T7 Touch and disk images, except a physical pull |
 | 4 | External drive throughput | Done on the T7 Touch, except video thumbnails |
 | 5 | Signing | Done: the grant persisted across rebuilds on the T7 Touch |
@@ -306,7 +318,22 @@ Both Instruments figures leave out one startup hitch of about 100 ms that each b
 
 #### Spike 2: libmpv embedding
 
-Open, in progress in a separate session. The AVFoundation and libmpv plan stands, and VLCKit remains the backup.
+libmpv embedding works, so VLCKit isn't needed. Full results are in `Spikes/Mpv/RESULTS.md`. Measured with mpv 0.41.0 and FFmpeg n8.1.2 from MPVKit 1.0.0's LGPL product, on nine synthetic clips of H.264, 4K HEVC 10-bit, AV1, VP9, ProRes, MPEG-2, MPEG-4, WMV2 and FLV1.
+
+| | Path A: render API, `CAOpenGLLayer` | Path B: `wid`, `CAMetalLayer`, MoltenVK |
+|---|---|---|
+| All nine clips played, resized and seeked | Yes, with no drops | Yes, with no drops |
+| Pixels confirmed on screen | Yes | Yes |
+| Live resize | Correct | Cropped, unless mpv is patched or a transform is used |
+| Depends on | mpv's public API, deprecated OpenGL | An MPVKit-only mpv patch, MoltenVK, shaderc |
+| Vsync feedback | None, so display-sync isn't usable | Yes |
+| Memory | About 105 MB less on average | |
+| 75 load and rebuild cycles | No failures or crashes | No failures or crashes |
+
+- Hardware decoding worked for H.264, HEVC, AV1, VP9 and ProRes. MPEG-2, MPEG-4, WMV2 and FLV1 decoded in software, as expected. AV1 and VP9 hardware decoding depend on the Mac.
+- `CAOpenGLLayer` needs its colorspace set to sRGB, or colors are oversaturated on P3 displays.
+- If hardened runtime is adopted, mpv's built-in Lua scripts must be turned off, or a JIT-style entitlement added, or the app is killed at launch.
+- **Not verified:** on-screen frame pacing on either path, because mpv's counters only describe its own view. Also real mouse-drag resize, fullscreen, HDR, subtitles, audible output, real camera files, removable media and macOS 26. Building mpv and FFmpeg ourselves hasn't been attempted, and the LGPL position needs a proper review.
 
 #### Spike 3: Volume identity
 
@@ -412,7 +439,9 @@ Check model licenses before distributing. InsightFace's pretrained models are no
 | Risk | Mitigation |
 |---|---|
 | Hand-built grid costs more than expected | `CALayer` grid chosen knowingly. Selection, drag and accessibility are built with the grid, not added later |
-| libmpv embedding is unstable | Spike 2, open, with VLCKit as backup |
+| OpenGL is removed from macOS | Vulkan through MoltenVK works, but needs a patched mpv. Our own build makes that possible |
+| Our own mpv and FFmpeg build is harder than expected | Not attempted yet, and needed before Milestone 6 |
+| mpv's file access bypasses the I/O scheduler | Test `stream_cb.h` in Milestone 6 |
 | Volume UUIDs change or collide without a marker file | File sampling on mount, hash-based reattachment, and separate handling of two mounted volumes with one UUID |
 | First-time indexing takes tens of minutes | Priority scheduling, resumable stages, visible tiles first, one read per file |
 | A slower link caps throughput | The T7 Touch linked at USB 2 speed on one connection. Worth showing in the UI if indexing is slow |
