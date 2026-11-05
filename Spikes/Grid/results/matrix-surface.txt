@@ -1,0 +1,136 @@
+setup: model 56 ms, first layout 20 ms, 33 MB, screen Built-in Retina Display max 120 Hz
+collection square scroll  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  2.76 p95  3.63 p99  3.95 max   4.12 ms  tiles 171  thumbs 1224    347
+a11y: role AXList, 1 children in 0.20 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x7cb9874b80> 0)
+collection square fastscroll  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  3.97 p95  4.61 p99  5.01 max   6.24 ms  tiles 171  thumbs 0      
+a11y: role AXList, 1 children in 0.03 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x7cb9874b80> 0)
+collection square zoom   84.8 fps of 120  missed 83   gap  107.2 ms  main p50  4.95 p95 27.08 p99 64.93 max 107.23 ms  tiles 572  thumbs 15927  2229 M
+a11y: role AXList, 1 children in 0.02 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x7cb9874b80> 0)
+collection square zoombare   83.2 fps of 120  missed 83   gap  100.9 ms  main p50  5.81 p95 28.37 p99 67.81 max 100.31 ms  tiles 520  thumbs 7437    2
+a11y: role AXList, 1 children in 0.02 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x7cb9874b80> 0)
+collection square zoombaresmall   33.3 fps of 120  missed 134  gap  121.2 ms  main p50 26.34 p95 65.20 p99 90.94 max 121.19 ms  tiles 630  thumbs 0   
+a11y: role AXList, 1 children in 0.03 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x7cb9874b80> 0)
+collection square zoomsmall   28.0 fps of 120  missed 118  gap  101.5 ms  main p50 32.15 p95 81.89 p99 97.87 max 100.09 ms  tiles 330  thumbs 6768   3
+a11y: role AXList, 1 children in 0.04 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x7cb9874b80> 0)
+collection square arrows  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  0.44 p95  7.98 p99  8.44 max   9.22 ms  tiles 171  thumbs 15772   427
+a11y: role AXList, 1 children in 0.12 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x7cb9874b80> 0)
+collection square arrowstress  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  4.15 p95  7.84 p99 10.56 max  11.40 ms  tiles 171  thumbs 3591  
+a11y: role AXList, 1 children in 0.05 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x7cb9874b80> 0)
+setup: model 54 ms, first layout 16 ms, 33 MB, screen Built-in Retina Display max 120 Hz
+collection justified scroll  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  2.96 p95  3.85 p99  4.14 max   4.76 ms  tiles 182  thumbs 1213    
+a11y: role AXList, 1 children in 0.19 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x77c3c64f00> 0)
+collection justified fastscroll  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  4.12 p95  4.57 p99  5.12 max   6.18 ms  tiles 179  thumbs 10  
+a11y: role AXList, 1 children in 0.03 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x77c3c64f00> 0)
+collection justified zoom   90.5 fps of 120  missed 87   gap   54.4 ms  main p50  5.78 p95 27.27 p99 47.35 max  54.41 ms  tiles 318  thumbs 18125  277
+a11y: role AXList, 1 children in 0.02 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x77c3c64f00> 0)
+collection justified zoombare   84.5 fps of 120  missed 93   gap   95.1 ms  main p50  6.59 p95 27.08 p99 59.58 max  93.78 ms  tiles 508  thumbs 9579  
+a11y: role AXList, 1 children in 0.03 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x77c3c64f00> 0)
+collection justified zoombaresmall   31.6 fps of 120  missed 155  gap   83.9 ms  main p50 25.28 p95 60.44 p99 73.64 max  82.82 ms  tiles 445  thumbs 0
+a11y: role AXList, 1 children in 0.03 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x77c3c64f00> 0)
+collection justified zoomsmall   28.2 fps of 120  missed 141  gap   81.8 ms  main p50 29.03 p95 69.90 p99 76.86 max  81.78 ms  tiles 329  thumbs 6816 
+a11y: role AXList, 1 children in 0.04 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x77c3c64f00> 0)
+collection justified arrows  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  0.56 p95  7.89 p99  8.42 max   8.75 ms  tiles 180  thumbs 17256   
+a11y: role AXList, 1 children in 0.11 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x77c3c64f00> 0)
+collection justified arrowstress  119.3 fps of 120  missed 2    gap   19.6 ms  main p50  5.22 p95  7.41 p99  8.60 max  15.98 ms  tiles 178  thumbs 339
+a11y: role AXList, 1 children in 0.05 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x77c3c64f00> 0)
+setup: model 59 ms, first layout 14 ms, 31 MB, screen Built-in Retina Display max 120 Hz
+layer square scroll  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  0.56 p95  1.12 p99  1.69 max   2.12 ms  tiles 63   thumbs 1224    344 MB 
+a11y: role AXList, 63 children in 0.37 ms, first: Photo 101107 of 200000
+layer square fastscroll  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  0.98 p95  1.56 p99  1.83 max   2.01 ms  tiles 63   thumbs 0       344 
+a11y: role AXList, 63 children in 0.30 ms, first: Photo 127720 of 200000
+layer square zoom  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  1.42 p95  3.35 p99  4.14 max   5.11 ms  tiles 330  thumbs 711     341 MB anc
+a11y: role AXList, 30 children in 0.10 ms, first: Photo 50005 of 200000
+layer square zoombare  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  1.25 p95  3.04 p99  3.55 max   4.28 ms  tiles 330  thumbs 0       341 MB
+a11y: role AXList, 30 children in 0.16 ms, first: Photo 23053 of 200000
+layer square zoombaresmall  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  2.15 p95  3.27 p99  4.06 max   5.96 ms  tiles 330  thumbs 0       3
+a11y: role AXList, 165 children in 0.57 ms, first: Photo 22996 of 200000
+layer square zoomsmall  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  1.95 p95  4.72 p99  5.50 max   6.60 ms  tiles 330  thumbs 704     247 M
+a11y: role AXList, 165 children in 0.55 ms, first: Photo 22996 of 200000
+layer square arrows  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  0.04 p95  1.72 p99  2.37 max   3.51 ms  tiles 63   thumbs 1368    407 MB k
+a11y: role AXList, 54 children in 0.24 ms, first: Photo 34642 of 200000
+layer square arrowstress  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  1.20 p95  2.27 p99  2.57 max   2.75 ms  tiles 54   thumbs 3582    421
+a11y: role AXList, 54 children in 0.23 ms, first: Photo 38233 of 200000
+setup: model 55 ms, first layout 16 ms, 32 MB, screen Built-in Retina Display max 120 Hz
+layer justified scroll  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  0.68 p95  1.38 p99  1.77 max   2.31 ms  tiles 75   thumbs 1246    353 M
+a11y: role AXList, 59 children in 0.27 ms, first: Photo 101130 of 200000
+layer justified fastscroll  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  0.98 p95  1.65 p99  1.91 max   2.28 ms  tiles 75   thumbs 8       3
+a11y: role AXList, 48 children in 0.23 ms, first: Photo 127686 of 200000
+layer justified zoom  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  2.70 p95  3.73 p99  4.24 max   5.28 ms  tiles 325  thumbs 826     335 MB 
+a11y: role AXList, 32 children in 0.11 ms, first: Photo 49846 of 200000
+layer justified zoombare  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  2.64 p95  3.33 p99  3.52 max   6.48 ms  tiles 329  thumbs 0       335
+a11y: role AXList, 36 children in 0.15 ms, first: Photo 25729 of 200000
+layer justified zoombaresmall  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  2.74 p95  3.50 p99  4.14 max   4.78 ms  tiles 329  thumbs 0     
+a11y: role AXList, 158 children in 0.51 ms, first: Photo 25552 of 200000
+layer justified zoomsmall  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  2.60 p95  3.81 p99  4.57 max   4.77 ms  tiles 310  thumbs 975     24
+a11y: role AXList, 147 children in 0.29 ms, first: Photo 25253 of 200000
+layer justified arrows  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  0.05 p95  1.93 p99  2.60 max   3.11 ms  tiles 65   thumbs 1293    399 M
+a11y: role AXList, 58 children in 0.31 ms, first: Photo 34622 of 200000
+layer justified arrowstress  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  1.23 p95  2.33 p99  2.80 max   3.27 ms  tiles 65   thumbs 3361    
+a11y: role AXList, 60 children in 0.26 ms, first: Photo 37990 of 200000
+setup: model 56 ms, first layout 16 ms, 32 MB, screen Built-in Retina Display max 120 Hz
+collection square scroll  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  3.05 p95  3.99 p99  4.27 max   4.52 ms  tiles 171  thumbs 1224    347
+a11y: role AXList, 1 children in 0.18 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x76ec05f4c0> 0)
+collection square fastscroll  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  3.97 p95  4.49 p99  4.76 max   5.84 ms  tiles 171  thumbs 0      
+a11y: role AXList, 1 children in 0.04 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x76ec05f4c0> 0)
+collection square zoom   91.5 fps of 120  missed 70   gap   55.3 ms  main p50  4.45 p95 24.07 p99 51.19 max  55.25 ms  tiles 330  thumbs 18012  3231 M
+a11y: role AXList, 1 children in 0.02 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x76ec05f4c0> 0)
+collection square zoombare   85.3 fps of 120  missed 77   gap  104.0 ms  main p50  4.97 p95 29.82 p99 60.55 max 104.02 ms  tiles 594  thumbs 11517   1
+a11y: role AXList, 1 children in 0.02 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x76ec05f4c0> 0)
+collection square zoombaresmall   32.5 fps of 120  missed 131  gap  122.3 ms  main p50 27.86 p95 67.15 p99 117.66 max 122.26 ms  tiles 609  thumbs 0  
+a11y: role AXList, 1 children in 0.03 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x76ec05f4c0> 0)
+collection square zoomsmall   26.7 fps of 120  missed 111  gap  162.0 ms  main p50 32.53 p95 88.41 p99 95.86 max 162.01 ms  tiles 792  thumbs 6432   3
+a11y: role AXList, 1 children in 0.04 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x76ec05f4c0> 0)
+collection square arrows  119.7 fps of 120  missed 1    gap   17.9 ms  main p50  0.49 p95  8.34 p99  8.64 max  10.14 ms  tiles 171  thumbs 15720   437
+a11y: role AXList, 1 children in 0.10 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x76ec05f4c0> 0)
+collection square arrowstress  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  4.38 p95  7.85 p99  8.58 max   8.90 ms  tiles 171  thumbs 3591  
+a11y: role AXList, 1 children in 0.04 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x76ec05f4c0> 0)
+setup: model 55 ms, first layout 19 ms, 34 MB, screen Built-in Retina Display max 120 Hz
+collection justified scroll  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  3.05 p95  3.95 p99  4.15 max   4.45 ms  tiles 186  thumbs 1230    
+a11y: role AXList, 1 children in 0.20 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x7567c0f800> 0)
+collection justified fastscroll  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  4.22 p95  4.70 p99  5.17 max   7.36 ms  tiles 165  thumbs 0   
+a11y: role AXList, 1 children in 0.03 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x7567c0f800> 0)
+collection justified zoom   88.5 fps of 120  missed 88   gap   65.1 ms  main p50  6.00 p95 26.98 p99 50.99 max  61.54 ms  tiles 366  thumbs 17517  261
+a11y: role AXList, 1 children in 0.02 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x7567c0f800> 0)
+collection justified zoombare   88.5 fps of 120  missed 84   gap   87.1 ms  main p50  6.23 p95 26.20 p99 47.47 max  85.20 ms  tiles 504  thumbs 8964  
+a11y: role AXList, 1 children in 0.02 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x7567c0f800> 0)
+collection justified zoombaresmall   33.4 fps of 120  missed 159  gap   88.0 ms  main p50 25.69 p95 57.60 p99 68.34 max  87.96 ms  tiles 495  thumbs 0
+a11y: role AXList, 1 children in 0.03 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x7567c0f800> 0)
+collection justified zoomsmall   29.9 fps of 120  missed 145  gap   76.9 ms  main p50 27.88 p95 66.64 p99 75.90 max  76.92 ms  tiles 390  thumbs 7200 
+a11y: role AXList, 1 children in 0.04 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x7567c0f800> 0)
+collection justified arrows  119.8 fps of 120  missed 1    gap   16.9 ms  main p50  0.55 p95  7.97 p99  8.49 max   9.32 ms  tiles 178  thumbs 17021   
+a11y: role AXList, 1 children in 0.11 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x7567c0f800> 0)
+collection justified arrowstress  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  5.37 p95  7.23 p99  8.06 max   8.30 ms  tiles 180  thumbs 337
+a11y: role AXList, 1 children in 0.05 ms, first: Optional(<NSCollectionViewSectionAccessibility: 0x7567c0f800> 0)
+setup: model 55 ms, first layout 15 ms, 31 MB, screen Built-in Retina Display max 120 Hz
+layer square scroll  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  0.67 p95  1.38 p99  1.87 max   2.04 ms  tiles 63   thumbs 1224    344 MB 
+a11y: role AXList, 63 children in 0.27 ms, first: Photo 101107 of 200000
+layer square fastscroll  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  0.92 p95  1.51 p99  1.74 max   1.98 ms  tiles 63   thumbs 0       344 
+a11y: role AXList, 63 children in 0.28 ms, first: Photo 127720 of 200000
+layer square zoom  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  1.56 p95  3.41 p99  3.77 max   4.25 ms  tiles 330  thumbs 746     341 MB anc
+a11y: role AXList, 30 children in 0.15 ms, first: Photo 50005 of 200000
+layer square zoombare  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  1.27 p95  2.94 p99  3.50 max   5.68 ms  tiles 330  thumbs 0       341 MB
+a11y: role AXList, 30 children in 0.15 ms, first: Photo 23053 of 200000
+layer square zoombaresmall  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  2.15 p95  3.15 p99  3.95 max   5.34 ms  tiles 330  thumbs 0       3
+a11y: role AXList, 165 children in 0.58 ms, first: Photo 22996 of 200000
+layer square zoomsmall  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  2.30 p95  3.86 p99  5.03 max   6.18 ms  tiles 330  thumbs 729     247 M
+a11y: role AXList, 165 children in 0.47 ms, first: Photo 22996 of 200000
+layer square arrows  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  0.06 p95  1.67 p99  2.47 max   3.19 ms  tiles 63   thumbs 1368    409 MB k
+a11y: role AXList, 54 children in 0.27 ms, first: Photo 34642 of 200000
+layer square arrowstress  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  1.17 p95  1.87 p99  2.39 max   2.78 ms  tiles 54   thumbs 3573    423
+a11y: role AXList, 54 children in 0.17 ms, first: Photo 38233 of 200000
+setup: model 56 ms, first layout 17 ms, 31 MB, screen Built-in Retina Display max 120 Hz
+layer justified scroll  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  0.67 p95  1.42 p99  1.88 max   2.07 ms  tiles 74   thumbs 1223    344 M
+a11y: role AXList, 57 children in 0.35 ms, first: Photo 101103 of 200000
+layer justified fastscroll  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  1.11 p95  1.67 p99  1.96 max   2.70 ms  tiles 77   thumbs 0       3
+a11y: role AXList, 64 children in 0.30 ms, first: Photo 127596 of 200000
+layer justified zoom  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  2.66 p95  3.63 p99  4.03 max   4.37 ms  tiles 322  thumbs 817     336 MB 
+a11y: role AXList, 29 children in 0.09 ms, first: Photo 49883 of 200000
+layer justified zoombare  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  2.69 p95  3.48 p99  3.83 max   4.12 ms  tiles 334  thumbs 0       336
+a11y: role AXList, 32 children in 0.15 ms, first: Photo 25840 of 200000
+layer justified zoombaresmall  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  2.69 p95  3.42 p99  3.79 max   4.18 ms  tiles 333  thumbs 0     
+a11y: role AXList, 147 children in 0.58 ms, first: Photo 25638 of 200000
+layer justified zoomsmall  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  2.66 p95  3.60 p99  4.16 max   5.27 ms  tiles 325  thumbs 801     25
+a11y: role AXList, 150 children in 0.34 ms, first: Photo 25461 of 200000
+layer justified arrows  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  0.05 p95  2.03 p99  2.65 max   3.20 ms  tiles 69   thumbs 1286    400 M
+a11y: role AXList, 64 children in 0.29 ms, first: Photo 34603 of 200000
+layer justified arrowstress  120.0 fps of 120  missed 0    gap    8.3 ms  main p50  1.24 p95  2.19 p99  2.84 max   3.02 ms  tiles 68   thumbs 3385    
+a11y: role AXList, 58 children in 0.21 ms, first: Photo 38003 of 200000

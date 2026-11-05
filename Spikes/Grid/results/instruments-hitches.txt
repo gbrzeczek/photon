@@ -1,0 +1,10 @@
+Animation Hitches template, 20 s limit, 200k items, square layout, IOSurface thumbnails, battery power.
+App launches at 0 s, then scenarios scroll 5 s, zoom 6 s, zoombare 6 s, then exit.
+collection hitches 223 total 3683 ms longest ['1.70s 108.3ms', '19.07s 66.7ms', '16.14s 58.3ms'] last at 19.75s
+  one-frame hitches 143  multi-frame 80
+  first 6 ['1.70', '2.80', '2.82', '9.57', '9.59', '9.61']
+  render p50 2.61 p95 4.29 p99 5.32 max 8.16 ms, over 8.33 ms: 0 of 2362, offscreen passes 0
+layer hitches 22 total 267 ms longest ['1.62s 91.7ms', '9.88s 8.3ms', '2.71s 8.3ms'] last at 19.07s
+  one-frame hitches 21  multi-frame 1
+  first 6 ['1.62', '2.71', '7.83', '7.87', '7.96', '9.03']
+  render p50 2.71 p95 4.79 p99 6.27 max 9.99 ms, over 8.33 ms: 3 of 2284, offscreen passes 0

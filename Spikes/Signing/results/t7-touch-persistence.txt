@@ -1,0 +1,10 @@
+>>> self1: first self-signed build. Expect a prompt: click Allow.
+18:24:43 +0000 build=self1 listed /Volumes/T7 Touch: 11 entries in 25.036s
+>>> self2: rebuilt, different binary, same certificate. Expect NO prompt.
+18:24:44 +0000 build=self2 listed /Volumes/T7 Touch: 11 entries in 0.011s
+>>> self3: rebuilt again. Expect NO prompt.
+18:24:46 +0000 build=self3 listed /Volumes/T7 Touch: 11 entries in 0.030s
+>>> adhoc1: control: ad-hoc build. Expect a prompt: click Allow.
+18:24:50 +0000 build=adhoc1 listed /Volumes/T7 Touch: 11 entries in 2.507s
+>>> adhoc2: control: ad-hoc rebuild. Expect a prompt again if ad-hoc really loses permission.
+18:24:52 +0000 build=adhoc2 listed /Volumes/T7 Touch: 11 entries in 1.106s

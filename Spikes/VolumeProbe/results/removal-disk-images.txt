@@ -1,0 +1,37 @@
+total 1231424
+-rwx------@ 1 grzegorzbrzeczek  staff  629145600 Nov  5 18:30 big.bin
+-rwx------@ 1 grzegorzbrzeczek  staff    1318153 Nov  5 18:30 big.jpg
+
+### force detach under mode=read file=big.bin (ExFAT)
+detach exit 0, took 0.271s
+1793899818.584 READY
+1793899818.947 read error after removal: errno 5 Input/output error, slowest call 5.0067901611328125e-06s, total 1.800060272216797e-05s
+1793899818.947 close returned
+child exit status 0
+
+### force detach under mode=mapped file=big.bin (ExFAT)
+detach exit 0, took 0.513s
+./run-removal-tests.sh: line 35:  9240 Bus error: 10           "$PROBE" read-across-removal "$m/$file" "$mode" < "$fifo" > "$WORK/out.$mode" 2>&1
+1793899819.503 READY
+child exit status 138 (signal 10)
+
+### force detach under mode=imagesource file=big.jpg (ExFAT)
+detach exit 0, took 0.244s
+1793899820.561 READY
+1793899820.561 image count 1, width 6000
+1793899820.888 imagesource decode after removal: got image 6000x4000
+child exit status 0
+
+### polite eject with an open handle, handle policy=close (ExFAT)
+Volume PTESTRM on disk4s1 unmounted
+diskutil exit 0
+1793899821.266 READY
+1793899821.890 willUnmount /Volumes/PTESTRM
+1793899821.890 closed handle
+1793899822.111 didUnmount /Volumes/PTESTRM
+
+### polite eject with an open handle, handle policy=hold (ExFAT)
+Dissenter parent PPID 9168 (/bin/bash)
+diskutil exit 1
+1793899823.489 READY
+1793899824.120 willUnmount /Volumes/PTESTRM

@@ -1,0 +1,6 @@
+.build/
+.swiftpm/
+*.dmg
+*.sparseimage
+# Machine-specific results from real drives can contain personal file names.
+results-real/

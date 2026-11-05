@@ -80,7 +80,7 @@ Use SwiftUI for the app shell and AppKit where large-scale performance or precis
 - Use Swift Testing for logic, and cover identity, merging, volume matching and migrations thoroughly.
 - Use a synthetic library generator for performance tests, so that they don't depend on personal photos.
 - Never commit personal photos or videos as fixtures.
-- Removable media behavior needs a physical check on a real hard drive and SD card, including pulling the drive during reads.
+- Removable media behavior needs a physical check on a real external drive, including pulling the drive during reads.
 - For UI changes, run the app and check them in both light and dark mode.
 - Automate UI tests for keyboard navigation in grid, list and viewer.
 

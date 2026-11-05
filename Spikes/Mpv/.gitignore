@@ -1,0 +1,13 @@
+.build/
+.swiftpm/
+# Generated clips, captures and logs stay out of the repo.
+out/
+clips/
+*.mkv
+*.webm
+*.avi
+*.wmv
+*.ts
+*.flv
+*.mov
+*.png

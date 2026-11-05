@@ -1,0 +1,58 @@
+### device
+file size 11.2 GB
+sequential: 359.2 MB/s
+random 4K: 2645 IOPS, median 0.37 ms, p99 0.96 ms
+### Photos cold enumerate
+enumerate: 29074 files in 0.308 s, 94497 files/s, 1.1 s per 100k
+### Photos cold enumerate-fm
+enumerate-fm: 29074 files in 2.312 s, 12575 files/s, 8.0 s per 100k
+### Photos warm enumerate
+enumerate: 29074 files in 0.021 s, 1385859 files/s, 0.1 s per 100k
+### GoPro cold enumerate
+enumerate: 1450 files in 0.101 s, 14383 files/s, 7.0 s per 100k
+### GoPro cold enumerate-fm
+enumerate-fm: 1450 files in 0.206 s, 7052 files/s, 14.2 s per 100k
+### GoPro warm enumerate
+enumerate: 1450 files in 0.005 s, 303730 files/s, 0.3 s per 100k
+### hash dir
+hash order=dir jobs=1 files=3000      371.1 files/s     0.07 h/100k  reads/file 3.0  KB/file 191  MB/s 72.6  failed 0
+### hash fileid
+hash order=fileid jobs=1 files=3000      374.7 files/s     0.07 h/100k  reads/file 3.0  KB/file 191  MB/s 73.3  failed 0
+### hash random
+hash order=random jobs=1 files=3000      354.4 files/s     0.08 h/100k  reads/file 3.0  KB/file 191  MB/s 69.4  failed 0
+### hash jobs 1
+hash order=dir jobs=1 files=3000      369.0 files/s     0.08 h/100k  reads/file 3.0  KB/file 191  MB/s 72.2  failed 0
+### hash jobs 4
+hash order=dir jobs=4 files=3000     1179.5 files/s     0.02 h/100k  reads/file 3.0  KB/file 191  MB/s 230.8  failed 0
+### metadata jobs 1
+metadata order=dir jobs=1 files=3000      465.2 files/s     0.06 h/100k  reads/file 1.0  KB/file 255  MB/s 121.3  failed 126
+### metadata jobs 2
+metadata order=dir jobs=2 files=3000      920.4 files/s     0.03 h/100k  reads/file 1.0  KB/file 255  MB/s 240.0  failed 126
+### metadata jobs 4
+metadata order=dir jobs=4 files=3000     1625.9 files/s     0.02 h/100k  reads/file 1.0  KB/file 255  MB/s 424.0  failed 126
+### metadata jobs 8
+metadata order=dir jobs=8 files=3000     1654.1 files/s     0.02 h/100k  reads/file 1.0  KB/file 255  MB/s 431.3  failed 126
+### thumb-embedded jobs 1
+thumb-embedded order=dir jobs=1 files=3000      268.1 files/s     0.10 h/100k  reads/file 1.0  KB/file 505  MB/s 138.6  failed 137
+  preview long edge: p10 160 px, median 160 px, p90 512 px, of 2863 files
+### thumb-embedded jobs 2
+thumb-embedded order=dir jobs=2 files=3000      504.2 files/s     0.06 h/100k  reads/file 1.0  KB/file 505  MB/s 260.6  failed 137
+  preview long edge: p10 160 px, median 160 px, p90 512 px, of 2863 files
+### thumb-embedded jobs 4
+thumb-embedded order=dir jobs=4 files=3000      769.9 files/s     0.04 h/100k  reads/file 1.0  KB/file 505  MB/s 397.9  failed 137
+  preview long edge: p10 160 px, median 160 px, p90 512 px, of 2863 files
+### thumb-embedded jobs 8
+thumb-embedded order=dir jobs=8 files=3000      838.8 files/s     0.03 h/100k  reads/file 1.0  KB/file 505  MB/s 433.6  failed 137
+  preview long edge: p10 160 px, median 160 px, p90 512 px, of 2863 files
+### thumb-full jobs 1
+thumb-full order=dir jobs=1 files=1500       25.9 files/s     1.07 h/100k  reads/file 1.0  KB/file 3858  MB/s 102.4  failed 0
+### thumb-full jobs 4
+thumb-full order=dir jobs=4 files=1500       60.7 files/s     0.46 h/100k  reads/file 1.0  KB/file 3858  MB/s 240.0  failed 0
+### thumb-full jobs 8
+thumb-full order=dir jobs=8 files=1500       74.3 files/s     0.37 h/100k  reads/file 1.0  KB/file 3858  MB/s 293.5  failed 0
+### done
+1
+
+### HEIC follow-up, 3000 files, 4 jobs: every failure is HEIC
+metadata prefix 256 KB: 126 failed, 1 MB: 124 failed, 4 MB: 48 failed
+thumb-embedded prefix 1 MB: 125 HEIC and 3 JPEG failed
