@@ -2,7 +2,7 @@
 
 Guidance for AI agents and contributors working on Photon, a native macOS browser for local photos and videos.
 
-The project is in planning, and no application code exists yet. [docs/PLAN.md](docs/PLAN.md) holds the architecture, milestones and decisions. Read it before making design changes, and update it when a decision changes.
+[docs/PLAN.md](docs/PLAN.md) holds the architecture, milestones and decisions. Read it before making design changes, and update it when a decision changes.
 
 ## Toolchain
 
@@ -10,7 +10,27 @@ The project is in planning, and no application code exists yet. [docs/PLAN.md](d
 - Swift 6 with strict concurrency.
 - Minimum deployment target: macOS 26.
 
-Build and test commands will be added here once Milestone 1 creates the project. Most logic belongs in `Packages/PhotonKit`, so it can be tested with `swift test` without launching the app.
+Most logic belongs in `Packages/PhotonKit`, so it can be tested without launching the app:
+
+```bash
+swift test --package-path Packages/PhotonKit
+```
+
+Build the app, the same way CI does:
+
+```bash
+xcodebuild build -project Photon.xcodeproj -scheme Photon -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO
+```
+
+`photon-index` is a development tool for measuring indexing outside the app. It prints counts, never file names:
+
+```bash
+swift run --package-path Packages/PhotonKit -c release photon-index scan <folder> --database <file>
+```
+
+`scan` refuses an external volume unless it's mounted read-only, and `generate` only writes to the internal disk or a disk image. Keep libraries built from a real drive out of this repository, because they contain real file names.
+
+The tests create and mount exFAT disk images with `hdiutil`, which works without a real drive.
 
 ## Rules that must not be broken
 

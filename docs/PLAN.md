@@ -2,7 +2,7 @@
 
 Photon is a native macOS browser for photos and videos stored in local folders and on removable media. This document records the product scope, architecture, milestones and open risks.
 
-**Status:** Milestone 0 decisions are made, and Milestone 1 is next. No application code exists yet. Spike code lives in [`Spikes/`](../Spikes/README.md), and results are under [Milestone 0 spikes](#milestone-0-spikes).
+**Status:** Milestone 1 is built and tested on disk images. Spike code lives in [`Spikes/`](../Spikes/README.md), and results are under [Milestone 0 spikes](#milestone-0-spikes) and [Milestone 1 results](#milestone-1-results).
 
 ## Product scope
 
@@ -59,6 +59,7 @@ Organization data attaches to content, and files are only locations of that cont
 | Table | Purpose |
 |---|---|
 | `volumes` | Photon's volume ID, volume UUID, name, capacity, last seen time |
+| `library_roots` | Folders chosen for indexing: volume ID, relative path, last completed scan |
 | `assets` | One piece of content: content hash, kind, dimensions, capture date, duration, dominant color, favorite flag, non-destructive rotation |
 | `file_instances` | One copy on disk: `asset_id`, `volume_id`, relative path, size, modified time |
 | `stacks`, `stack_members` | Grouped assets: RAW+JPEG pairs, Live Photos, later similar scenes |
@@ -74,7 +75,9 @@ Exact duplicates are several `file_instances` pointing at one asset, so they nee
 - New files get a provisional asset with no hash, so they can be shown before hashing finishes.
 - When a hash matches an existing asset, the provisional row merges into it in one transaction, keeping organization data.
 - Favoriting or tagging an unhashed file hashes it immediately.
-- If a file changes on disk at the same path with the same capture date and dimensions, it stays the same asset and takes the new hash. Width and height may be swapped, to allow for rotation.
+- If a file changes on disk at the same path with the same capture date and dimensions, it stays the same asset and takes the new hash. Width and height may be swapped, to allow for rotation. A missing date or dimension never counts as a match, because attaching a favorite to the wrong picture is worse than leaving it on the old content.
+- If other copies of the asset still hold the old content, the edited file gets a new asset with a copy of the organization data, and the old asset keeps its hash.
+- An asset with no files survives if it has any organization data, so that it can reattach by hash. Otherwise it's deleted with its last file.
 - When Photon itself modifies a file in a future release, it updates the hash directly.
 - A sampled hash is good enough for identity but is not proof that two files are identical. Any destructive action must first compare the full contents.
 
@@ -83,8 +86,8 @@ Exact duplicates are several `file_instances` pointing at one asset, so they nee
 On mount:
 
 1. Read the volume UUID from DiskArbitration and look for a matching `volumes` row.
-2. Check a sample of indexed files by relative path, size and modified time. This catches a drive that was reused, or a clone that has since diverged.
-3. If the sample matches, bring the volume online and restore its sessions.
+2. Check a sample of 64 indexed files by relative path, size and modified time. This catches a drive that was reused, or a clone that has since diverged.
+3. If at least half the sample matches, bring the volume online and restore its sessions. It's a majority rather than every file, because files on a drive do change between sessions.
 4. If it doesn't, treat it as a new volume. Assets reattach as files are hashed.
 5. Rescan incrementally, skipping files whose path, size and modified time are unchanged.
 
@@ -92,10 +95,11 @@ Rules that follow from this:
 
 - Paths are stored relative to the volume root, because mount paths change (`/Volumes/Foo 1`).
 - Bookmarks and file IDs are not used for identity. Bookmarks have been reported to break on exFAT. exFAT and FAT32 file IDs survive remounts, renames and moves on disk images, but they are reused for unrelated files after a delete, and exFAT IDs behaved like start clusters.
-- A byte-for-byte clone is indistinguishable from its original: same UUID, file IDs, sizes and dates. It's harmless when mounted alone, because it is the same content. When two volumes with one UUID are mounted together, Photon must keep them apart by BSD name for the session, and must not bring a second copy online as the same `volumes` row.
+- A byte-for-byte clone is indistinguishable from its original: same UUID, file IDs, sizes and dates. It's harmless when mounted alone, because it is the same content. When two volumes with one UUID are mounted together, Photon must keep them apart by BSD name for the session, and must not bring a second copy online as the same `volumes` row. For now the second one simply isn't indexed for that session. Milestone 4 decides what the UI shows.
 - Don't use `isRemovable` or `isEjectable` to recognize external media. The T7 Touch reports both as false, and it reports no persistent ID support.
 - Don't use `URLResourceKey.volumeUUIDStringKey` for identity. On FAT32 it returned a different UUID for a second mount of a clone, while DiskArbitration stayed stable.
-- On `willUnmount`, cancel all work and close every file handle so that ejecting succeeds. An open handle does block the unmount. `willUnmount` also fires before an unmount that then fails, so if no `didUnmount` follows, the volume is still mounted and work must resume.
+- On `willUnmount`, cancel all work and close every file handle so that ejecting succeeds. An open handle does block the unmount. `willUnmount` also fires before an unmount that then fails, so if no `didUnmount` follows, the volume is still mounted and work must resume. Photon waits 5 seconds to find out.
+- A gone mount makes every path look deleted. Any error, or empty listing, is checked against the mount before it's believed, so a failing drive never looks like an empty one. A scan only forgets a folder when the volume is still mounted and the scan confirmed it's gone. Folders that couldn't be listed keep their files.
 - Reads on removable media must not be memory-mapped, because pulling the drive during a mapped read crashes the process (SIGBUS confirmed on a disk image). Ordinary reads return `EIO` immediately. Load bytes with ordinary reads and hand them to `CGImageSource`.
 - Read-only volumes are normal: NTFS drives, and volumes mounted read-only. Rename and Move to Trash are disabled there.
 - A sleeping drive can take a moment to wake, so the UI needs a calm waiting state.
@@ -109,6 +113,10 @@ Indexing runs in stages, and each stage is resumable:
 3. **Thumbnails:** embedded previews first where available.
 4. **Hashing:** sampled content hash.
 5. **Pairing:** RAW+JPEG and Live Photo stacks.
+
+Enumeration writes rows only for what differs, one directory at a time, so an unchanged rescan writes nothing and opens no files. Everything left to do is stored as pending rows, so a run can stop at any point and the next one carries on. Milestone 1 covers stages 1, 2 and 4. Thumbnails arrive in Milestone 2, and pairing with the stacks feature in Milestone 5.
+
+Metadata and hashing share one job per file, and one read: the first 256 KB gives both the metadata and the hash's head chunk. They'll need separating only if a hash has to jump ahead of metadata for a favorited file.
 
 Each volume has its own I/O scheduler, with these priorities:
 
@@ -125,7 +133,9 @@ First-time indexing takes about 30 minutes per 100k photos at full speed, and ab
 - A full read is the expensive step, so the hash, metadata and thumbnail for a photo should all come from that one read.
 - Enumeration is not the bottleneck, at about 1 second per 100k files from cold.
 - Embedded previews are mostly 160 px, too small for standard thumbnails. They are 12 times faster, so they fill tiles first, and a full decode then replaces them.
-- HEIC metadata can't be read from a partial file through ImageIO, so HEIC files need a full read or a parser of our own.
+- HEIC metadata can't be read from a partial file through ImageIO, so HEIC and AVIF files get a full read for now. A parser of our own could avoid that later.
+- Other photos try a 256 KB prefix, then 4 MB, then the whole file up to 512 MB, for formats such as some RAW files that keep metadata later on.
+- Video metadata comes from a small parser of QuickTime and MP4 boxes, which reads only box headers and the `moov` box, through the scheduler. AVFoundation isn't used here because it opens files itself. MKV, WebM, AVI and other containers have no metadata until FFmpeg's libraries arrive in Milestone 6.
 - Video thumbnails haven't been measured.
 
 ### Thumbnails and memory
@@ -233,17 +243,20 @@ Photon needs its own build of mpv and FFmpeg, shipped as signed dylibs or framew
 - Release the GL context in the layer's `deinit`, after `mpv_render_context_free` and `mpv_terminate_destroy`. Core Animation can still display the layer after mpv is gone.
 - Decide how mpv's reads fit the disk rules. mpv opens files itself, which bypasses the per-volume I/O scheduler and its cancellation. `stream_cb.h` may solve this, and it's untested.
 
-### Repository layout (planned)
+### Repository layout
 
 ```text
 App/                 Thin macOS app target
+Photon.xcodeproj/    App project, which uses PhotonKit as a local package
 Spikes/              Milestone 0 measurement code, not part of the app
 Packages/PhotonKit/
   PhotonCore         Schema, models, database, migrations
   PhotonIndex        Scanning, hashing, volumes, I/O scheduling
-  PhotonMedia        Decoding, thumbnails, pasteboard
+  PhotonMedia        Metadata, decoding, thumbnails, pasteboard
   PhotonVideo        VideoEngine and its implementations
   PhotonUI           Grid, list, viewer, sidebar
+  PhotonTestSupport  Synthetic media and disk images, for tests and tools only
+  photon-index       Development tool for measuring indexing
 docs/                Project documentation
 ```
 
@@ -402,6 +415,22 @@ The tool was first validated on an exFAT disk image, and those numbers are in `S
 - **Why it works:** a self-signed certificate gives a designated requirement of bundle identifier plus certificate, which stayed identical across rebuilds. Ad-hoc signing gives a `cdhash` requirement, which changes on every build.
 - **Also confirmed:** `codesign` works with an untrusted certificate when given its SHA-1 hash and keychain, so CI doesn't need to trust it. Local builds ran, even though `spctl` rejects them.
 - **Testing note:** disk images aren't gated by TCC at all, so this check always needs a real drive.
+
+### Milestone 1 results
+
+Measured with a release build on a 14 GB exFAT disk image, mounted read-only, on the M4 Max's internal SSD. The library was 20,000 synthetic files totaling 10 GB. These numbers show what the pipeline costs, not how fast a drive is, so they don't replace [Spike 4](#spike-4-external-drive-throughput).
+
+| Run | Enumerate | Read | Files opened | Bytes read |
+|---|---|---|---|---|
+| First index | 0.47 s | 11.15 s, 1,794 files/s | 20,000 | 6.9 GB |
+| Rescan, nothing changed | 0.10 s | None | 0 | 0 |
+
+- The library file took 5.9 MB, about 300 bytes per file.
+- Identical files collapsed as designed: 799 duplicates merged into existing assets, leaving 19,201.
+- A `diskutil unmount` from outside the process succeeded during a run, which ended as `volumeOffline` with no failures.
+- Tests on exFAT images cover changed-file rescans, read-only mounts staying byte-identical, remounts at a new path, clones, a forced detach, a normal eject and a refused unmount.
+
+**Not verified:** a physical pull of a real drive, which is a Milestone 4 test.
 
 ## Distribution
 
