@@ -58,6 +58,17 @@ public struct MountedVolume: Hashable, Sendable {
         return (volume, relative(absolute, to: volume.mountPoint))
     }
 
+    /// Every mounted local disk that has an identity.
+    public static func all() -> [MountedVolume] {
+        var list: UnsafeMutablePointer<statfs>?
+        let count = getmntinfo(&list, MNT_NOWAIT)
+        guard count > 0, let list else { return [] }
+        return (0..<Int(count)).compactMap { index in
+            guard list[index].f_flags & UInt32(MNT_LOCAL) != 0 else { return nil }
+            return try? MountedVolume(list[index])
+        }
+    }
+
     /// The relative path of `absolute` on a volume mounted at `mountPoint`.
     static func relative(_ absolute: String, to mountPoint: String) -> String {
         if absolute == mountPoint { return "" }

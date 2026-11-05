@@ -311,6 +311,40 @@ public final class LibraryIndexer: Sendable {
         session?.scheduler.suspend()
     }
 
+    /// Connects a mounted volume without scanning it, so that its files can be read.
+    /// The same rules as indexing apply: a refused mount stays unconnected.
+    @discardableResult
+    public func connect(mount: MountedVolume) async throws -> VolumeID {
+        if let reason = MountPolicy.refusalReason(for: mount) { throw IndexingError.refused(reason) }
+        try await ensureLibraryIsOff(mount)
+        return try await session(for: mount).volume
+    }
+
+    /// Connects every mounted volume the library already knows. Each one reads only what's needed to
+    /// recognize it, and a volume that can't be connected is skipped: it just stays offline.
+    public func connectKnownVolumes() async throws -> [VolumeID] {
+        let known = Set(try await store.allVolumes().map(\.uuid))
+        guard !known.isEmpty else { return [] }
+        let mounted = try await onIOThread { MountedVolume.all() }
+        var connected: [VolumeID] = []
+        for mount in mounted where known.contains(mount.uuid) {
+            if let volume = try? await connect(mount: mount) { connected.append(volume) }
+        }
+        return connected
+    }
+
+    /// The scheduler for an online volume, or nil when it's offline. All reads of its files go through this.
+    public func scheduler(for volume: VolumeID) -> VolumeIOScheduler? {
+        sessions.withLock { sessions in
+            sessions.values.first { $0.volume == volume && !$0.scheduler.isSuspended }?.scheduler
+        }
+    }
+
+    /// Where an online volume is mounted right now.
+    public func mountPoint(of volume: VolumeID) -> String? {
+        scheduler(for: volume)?.mountPoint
+    }
+
     /// Volumes in use this session, by mount point.
     public func onlineVolumes() -> [String: VolumeID] {
         sessions.withLock { $0.mapValues(\.volume) }

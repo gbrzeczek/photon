@@ -26,12 +26,48 @@ struct MigrationTests {
         }
     }
 
+    /// Every table and index, in a stable order, for a database at any migration.
+    private static let schemaSQL = """
+        SELECT sql FROM sqlite_master
+        WHERE sql IS NOT NULL AND name NOT LIKE 'grdb_%' AND name NOT LIKE 'sqlite_%'
+        ORDER BY type DESC, name
+        """
+
+    private func snapshot(_ name: String) throws -> String {
+        let url = try #require(Bundle.module.url(forResource: "Fixtures/\(name)", withExtension: "sql"))
+        return try String(contentsOf: url, encoding: .utf8)
+    }
+
     @Test("The v1 schema matches its snapshot, so a shipped migration can't be edited unnoticed")
-    func schemaSnapshot() async throws {
+    func schemaSnapshotV1() throws {
+        let queue = try DatabaseQueue()
+        try LibraryMigrations.migrator.migrate(queue, upTo: "v1")
+        let schema = try queue.read { try String.fetchAll($0, sql: Self.schemaSQL).joined(separator: ";\n\n") + ";\n" }
+        #expect(schema == (try snapshot("schema-v1")), "Add a migration instead of editing v1.")
+    }
+
+    @Test("The v2 schema matches its snapshot")
+    func schemaSnapshotV2() async throws {
         let store = try LibraryStore(url: temporaryURL())
-        let snapshotURL = try #require(Bundle.module.url(forResource: "Fixtures/schema-v1", withExtension: "sql"))
-        let snapshot = try String(contentsOf: snapshotURL, encoding: .utf8)
-        #expect(try await schema(store) == snapshot, "Add a migration instead of editing v1.")
+        #expect(try await schema(store) == (try snapshot("schema-v2")), "Add a migration instead of editing v2.")
+    }
+
+    @Test("A v1 library upgrades in place and keeps its assets, with thumbnails still to make")
+    func upgradeFromV1() async throws {
+        let url = temporaryURL()
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        do {
+            let queue = try DatabaseQueue(path: url.path)
+            try LibraryMigrations.migrator.migrate(queue, upTo: "v1")
+            try await queue.write { db in
+                try db.execute(sql: "INSERT INTO assets (kind, created_at, is_favorite) VALUES (1, 0, 1)")
+            }
+        }
+        let store = try LibraryStore(url: url)
+        let asset = try #require(try await store.asset(AssetID(rawValue: 1)))
+        #expect(asset.isFavorite)
+        let state = try await store.pool.read { try Int.fetchOne($0, sql: "SELECT thumbnail_state FROM assets") }
+        #expect(state == 0)
     }
 
     @Test("The plan's tables all exist, including those whose features arrive later")
