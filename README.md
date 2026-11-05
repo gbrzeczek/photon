@@ -2,7 +2,7 @@
 
 A fast, native macOS browser for photos and videos in your own folders and on removable drives.
 
-> **Status: planning.** There's no app to download yet. This README describes what Photon is being built to do. Follow progress in the [implementation plan](docs/PLAN.md).
+> **Status: early development.** Indexing works, but there's no app to download yet. This README describes what Photon is being built to do. Follow progress in the [implementation plan](docs/PLAN.md).
 
 ## Why Photon
 
