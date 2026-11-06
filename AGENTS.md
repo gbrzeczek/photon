@@ -28,6 +28,14 @@ xcodebuild build -project Photon.xcodeproj -scheme Photon -destination 'platform
 swift run --package-path Packages/PhotonKit -c release photon-index scan <folder> --database <file>
 ```
 
+`photon-index thumbnails <folder> --database <file>` makes thumbnails for a scanned folder, and `photon-index seed --database <file> --count 100000` writes a library with no real files, for measuring the grid. Point the app at one with `PHOTON_LIBRARY=<file>`, so that nothing touches the real library. `PHOTON_PERF_OUT=<file>` runs the scripted scenarios and writes their timings.
+
+The UI tests need an unlocked screen, so they aren't in CI:
+
+```bash
+TEST_RUNNER_PHOTON_UITEST_LIBRARY=<file> xcodebuild test -project Photon.xcodeproj -scheme Photon -destination 'platform=macOS'
+```
+
 `scan` refuses an external volume unless it's mounted read-only, and `generate` only writes to the internal disk or a disk image. Keep libraries built from a real drive out of this repository, because they contain real file names.
 
 The tests create and mount exFAT disk images with `hdiutil`, which works without a real drive.
