@@ -73,6 +73,7 @@ extension LibraryStore {
             if samePicture && others == 0 {
                 // An edited or rotated file stays the same asset, and takes the new hash.
                 try setHash(file.hash, on: current.id, db)
+                try invalidateThumbnails(of: current.id, db)
                 try fillMetadata(file.metadata, on: current.id, db)
                 counts.rehashed += 1
             } else if samePicture {
@@ -167,6 +168,7 @@ extension LibraryStore {
         try db.execute(
             sql: "UPDATE sessions SET anchor_asset_id = ? WHERE anchor_asset_id = ?",
             arguments: [target.rawValue, source.rawValue])
+        try moveThumbnails(from: source, to: target, db)
         // Cascades remove the source's own memberships, which were copied above.
         try db.execute(sql: "DELETE FROM assets WHERE id = ?", arguments: [source.rawValue])
     }

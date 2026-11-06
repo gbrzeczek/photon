@@ -96,6 +96,6 @@ struct VolumeScanner {
     }
 }
 
-enum Signposts {
-    static let subsystem = "app.photon"
+public enum Signposts {
+    public static let subsystem = "app.photon"
 }

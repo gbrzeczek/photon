@@ -36,6 +36,7 @@ let package = Package(
             resources: [.copy("Fixtures")]),
         .testTarget(name: "PhotonIndexTests", dependencies: ["PhotonIndex", "PhotonTestSupport"]),
         .testTarget(name: "PhotonMediaTests", dependencies: ["PhotonMedia", "PhotonTestSupport"]),
+        .testTarget(name: "PhotonUITests", dependencies: ["PhotonUI", "PhotonTestSupport"]),
         .testTarget(
             name: "PhotonIntegrationTests",
             dependencies: ["PhotonCore", "PhotonIndex", "PhotonMedia", "PhotonTestSupport"]),

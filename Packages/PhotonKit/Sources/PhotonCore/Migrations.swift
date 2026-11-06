@@ -3,11 +3,12 @@ internal import GRDB
 /// Schema migrations. Migrations that have shipped are immutable, because user libraries must survive
 /// upgrades: to change the schema, add a new one. `SchemaSnapshotTests` fails if an old one is edited.
 enum LibraryMigrations {
-    static let current = "v1"
+    static let current = "v2"
 
     static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
         migrator.registerMigration("v1") { db in try db.execute(sql: v1) }
+        migrator.registerMigration("v2") { db in try db.execute(sql: v2) }
         return migrator
     }
 
@@ -128,5 +129,32 @@ enum LibraryMigrations {
         CREATE UNIQUE INDEX sessions_folder ON sessions(volume_id, relative_path) WHERE volume_id IS NOT NULL;
         CREATE UNIQUE INDEX sessions_album ON sessions(album_id) WHERE album_id IS NOT NULL;
         CREATE INDEX sessions_anchor ON sessions(anchor_asset_id);
+        """
+
+    /// Thumbnails: pack files on the internal disk, with offsets here. Keyed by asset, because
+    /// thumbnails describe content, and removed along with it.
+    private static let v2 = """
+        -- 0 = none, 1 = embedded preview only, 2 = complete, 3 = failed until the file changes.
+        ALTER TABLE assets ADD COLUMN thumbnail_state INTEGER NOT NULL DEFAULT 0;
+        CREATE INDEX assets_thumbnail_pending ON assets(id) WHERE thumbnail_state < 2 AND kind = 1;
+
+        CREATE TABLE thumbnail_packs (
+            id INTEGER PRIMARY KEY,
+            tier INTEGER NOT NULL,
+            byte_count INTEGER NOT NULL DEFAULT 0,
+            last_used_at REAL NOT NULL
+        );
+        CREATE TABLE thumbnails (
+            asset_id INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+            -- 0 = embedded preview, 1 = small, 2 = large.
+            tier INTEGER NOT NULL,
+            pack_id INTEGER NOT NULL REFERENCES thumbnail_packs(id) ON DELETE CASCADE,
+            byte_offset INTEGER NOT NULL,
+            byte_count INTEGER NOT NULL,
+            width INTEGER NOT NULL,
+            height INTEGER NOT NULL,
+            PRIMARY KEY (asset_id, tier)
+        ) WITHOUT ROWID;
+        CREATE INDEX thumbnails_pack ON thumbnails(pack_id);
         """
 }
