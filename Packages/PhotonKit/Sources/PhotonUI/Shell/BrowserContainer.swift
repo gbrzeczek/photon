@@ -5,8 +5,11 @@ import SwiftUI
 final class BrowserContainerView: NSView {
     let grid: TileGridView
     let list: BrowserListView
+    private let model: BrowserModel
+    private var hasLaidOut = false
 
     init(model: BrowserModel) {
+        self.model = model
         grid = TileGridView(model: model)
         list = BrowserListView(model: model)
         super.init(frame: .zero)
@@ -15,14 +18,24 @@ final class BrowserContainerView: NSView {
         addSubview(grid)
         addSubview(list)
         model.attach(grid: grid, list: list) { [weak self] in self?.show($0) }
+        needsLayout = true
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("Not used.") }
 
+    override func layout() {
+        super.layout()
+        guard !hasLaidOut, bounds.width > 1 else { return }
+        hasLaidOut = true
+        // After this pass, once the grid and the list have laid out too.
+        DispatchQueue.main.async { [model] in model.contentDidLayOut() }
+    }
+
     func show(_ mode: BrowserViewMode) {
         grid.isHidden = mode != .tiles
         list.isHidden = mode != .list
+        if mode == .list { list.didBecomeVisible() }
     }
 }
 
@@ -34,6 +47,7 @@ struct BrowserContentRepresentable: NSViewRepresentable {
         DispatchQueue.main.async { [weak view] in
             view?.grid.focus()
         }
+        DevelopmentHooks.placeWindow(of: view)
         PerformanceHarness.attachIfRequested(to: view, model: model)
         DevelopmentHooks.scheduleSnapshot(of: view)
         return view

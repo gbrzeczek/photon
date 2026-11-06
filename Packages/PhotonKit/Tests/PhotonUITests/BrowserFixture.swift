@@ -127,6 +127,50 @@ final class BrowserFixture {
         flushFrame()
     }
 
+    /// Presses at the middle of `row` and holds. Returns where, in window coordinates.
+    func press(row: Int, modifiers: NSEvent.ModifierFlags = []) -> CGPoint {
+        let point = windowPoint(row: row)
+        grid.handleMouseDown(mouseEvent(.leftMouseDown, at: point, modifiers: modifiers))
+        flushFrame()
+        return point
+    }
+
+    func drag(to point: CGPoint) {
+        grid.handleMouseDragged(mouseEvent(.leftMouseDragged, at: point))
+        flushFrame()
+    }
+
+    func release(at point: CGPoint) async {
+        sendMouseUp(at: point)
+        await waitForBand()
+    }
+
+    /// Lets go, and returns while the rows are still being worked out.
+    func sendMouseUp(at point: CGPoint) {
+        grid.handleMouseUp(mouseEvent(.leftMouseUp, at: point))
+    }
+
+    /// The rows are worked out off the main thread. Tests need no more than a few of these.
+    func waitForBand() async {
+        for _ in 0..<200 where grid.isTrackingBandForTesting {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        flushFrame()
+    }
+
+    func windowPoint(row: Int) -> CGPoint {
+        let frame = grid.tileLayout.frame(of: row)
+        return grid.document.convert(CGPoint(x: frame.midX, y: frame.midY), to: nil)
+    }
+
+    private func mouseEvent(
+        _ type: NSEvent.EventType, at point: CGPoint, modifiers: NSEvent.ModifierFlags = []
+    ) -> NSEvent {
+        NSEvent.mouseEvent(
+            with: type, location: point, modifierFlags: modifiers, timestamp: 0, windowNumber: window.windowNumber,
+            context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+    }
+
     var currentRow: Int? { model.selection.currentRow }
     var selectedRows: IndexSet { model.selection.rows }
 

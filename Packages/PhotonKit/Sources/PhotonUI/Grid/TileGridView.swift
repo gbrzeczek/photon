@@ -29,6 +29,8 @@ final class GridDocumentView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) { grid?.handleMouseDown(event) }
+    override func mouseDragged(with event: NSEvent) { grid?.handleMouseDragged(event) }
+    override func mouseUp(with event: NSEvent) { grid?.handleMouseUp(event) }
     override func magnify(with event: NSEvent) { grid?.handleMagnify(event) }
     override func menu(for event: NSEvent) -> NSMenu? { grid?.contextMenu(for: event) }
     override func selectAll(_ sender: Any?) { grid?.model.selectAll() }
@@ -59,6 +61,8 @@ final class TileGridView: NSView, BrowserContent {
     private let container = PlainLayer()
     /// The system-style ring around the current item.
     private let focusRing = PlainLayer()
+    /// The rectangle of a rubber band.
+    private let bandLayer = PlainLayer()
     private let loader: ThumbnailLoader
     private let artwork = TileArtwork()
     private lazy var ticker = FrameTicker { [weak self] _ in self?.tick() ?? false }
@@ -79,11 +83,24 @@ final class TileGridView: NSView, BrowserContent {
     private var isZooming = false
     private var zoomEndsAt: ContinuousClock.Instant?
     private var zoomAnchor: ViewAnchor?
+    /// Fingers on the trackpad. A pause in a pinch isn't its end.
+    private var isPinching = false
+    /// Easing to a size that fills the width.
+    private var tileAnimation: (from: CGFloat, to: CGFloat, start: CFTimeInterval)?
     private var lastScrollTop: CGFloat = 0
     private var lastScrollTime = ContinuousClock.now
     private var isScrollingFast = false
     private var idleFrames = 0
     private var fullPassGeneration = 0
+
+    // Rubber band
+    private var press: (point: CGPoint, extending: Bool)?
+    /// A plain click on a selected tile narrows the selection only when the button comes up.
+    private var selectOnRelease: Int?
+    private var band: RubberBand?
+    /// Where the pointer is, in the window. Scrolling moves the band with no event of its own.
+    private var bandPointer = CGPoint.zero
+    private var lastBandFrame = ContinuousClock.now
 
     /// Above this, tiles show their stored color, and nothing is decoded for tiles that won't stay.
     private static let fastScrollSpeed: CGFloat = 12_000
@@ -94,6 +111,7 @@ final class TileGridView: NSView, BrowserContent {
     private static let zoomSettleDelay: Duration = .milliseconds(120)
     nonisolated private static let signposter = OSSignposter(subsystem: "app.photon", category: "Grid")
     private static let transitionDuration: CFTimeInterval = 0.18
+    private static let tileAnimationDuration: CFTimeInterval = 0.2
 
     /// Frame timings for the measuring harness. Nil unless it's running.
     var frameObserver: ((Double) -> Void)?
@@ -119,11 +137,17 @@ final class TileGridView: NSView, BrowserContent {
         scrollView.addSubview(host, positioned: .below, relativeTo: scrollView.verticalScroller)
         host.wantsLayer = true
         host.layerContentsRedrawPolicy = .never
+        // Nothing else clips tiles, and a row half off the top would stick out behind the toolbar.
+        host.layer?.masksToBounds = true
         host.layer?.addSublayer(container)
         container.addSublayer(focusRing)
         focusRing.zPosition = 10
         focusRing.isHidden = true
         focusRing.cornerRadius = 3
+        container.addSublayer(bandLayer)
+        bandLayer.zPosition = 11
+        bandLayer.isHidden = true
+        bandLayer.borderWidth = 1
         configureAccessibility()
 
         scrollView.contentView.postsBoundsChangedNotifications = true
@@ -148,6 +172,7 @@ final class TileGridView: NSView, BrowserContent {
         guard width > 1 else { return }
         model.layoutWidth = width
         if width != tileLayout.width {
+            tileAnimation = nil
             let anchor = captureAnchor()
             if let anchor, tileLayout.mode == .aspect, tileLayout.count > 0 {
                 let frame = tileLayout.frame(of: anchor.row)
@@ -197,15 +222,18 @@ final class TileGridView: NSView, BrowserContent {
             frameObserver?(Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6)
         }
 
-        if let end = zoomEndsAt, ContinuousClock.now >= end {
+        // A stalled frame mustn't end the zoom under a running animation, which needs its anchor.
+        if let end = zoomEndsAt, ContinuousClock.now >= end, !isPinching, tileAnimation == nil {
             zoomEndsAt = nil
             finishZoom()
         }
+        stepTileAnimation()
         // Key repeats land here, so that several in one frame do one update.
         if needsTileUpdate {
             needsTileUpdate = false
             updateTiles(force: false)
         }
+        scrollForBand()
         if needsFocusPlacement {
             needsFocusPlacement = false
             placeFocusRing()
@@ -221,7 +249,8 @@ final class TileGridView: NSView, BrowserContent {
         }
         drainThumbnails()
 
-        let busy = zoomEndsAt != nil || isScrollingFast || loader.hasFinishedThumbnails || needsTileUpdate
+        let busy = zoomEndsAt != nil || tileAnimation != nil || isScrollingFast || loader.hasFinishedThumbnails
+            || needsTileUpdate || band != nil
         idleFrames = busy ? 0 : idleFrames + 1
         return idleFrames < 30
     }
@@ -259,6 +288,7 @@ final class TileGridView: NSView, BrowserContent {
         lastScrollTop = top
         lastScrollTime = now
         updateTiles(force: false)
+        updateBand()
         if !isZooming, tileLayout.canSettle(viewportTop: top) { settleRows() }
         if !isScrollingFast, !isZooming, abs(top - lastAheadTop) > viewportHeight / 2 {
             requestAhead(wanted: wantedTier)
@@ -377,7 +407,7 @@ final class TileGridView: NSView, BrowserContent {
         tile.assetID = asset
         tile.isVideo = result.flags[row].contains(.video)
         tile.backgroundColor = backgroundColor(row: row)
-        setSelected(tile, model.selection.isSelected(row))
+        setSelected(tile, showsSelected(row))
 
         if tile.isVideo {
             // Video thumbnails need a frame from the file, which arrives with Milestone 6.
@@ -443,7 +473,13 @@ final class TileGridView: NSView, BrowserContent {
         return color
     }
 
+    /// While a band is being dragged the selection hasn't been worked out yet, so tiles ask the band.
+    private func showsSelected(_ row: Int) -> Bool {
+        band?.covers(row, in: tileLayout) ?? model.selection.isSelected(row)
+    }
+
     private func setSelected(_ tile: TileLayer, _ selected: Bool) {
+        tile.showsSelection = selected
         tile.borderWidth = selected ? 3 : 0
         if selected {
             effectiveAppearance.performAsCurrentDrawingAppearance {
@@ -458,7 +494,7 @@ final class TileGridView: NSView, BrowserContent {
         for (row, tile) in tiles {
             tile.backgroundColor = backgroundColor(row: row)
             if tile.isVideo { tile.contents = artwork.videoPlaceholder(appearance: effectiveAppearance) }
-            setSelected(tile, model.selection.isSelected(row))
+            setSelected(tile, showsSelected(row))
         }
         applyFocusColor()
         CATransaction.commit()
@@ -491,7 +527,10 @@ final class TileGridView: NSView, BrowserContent {
             return
         }
         focusRing.isHidden = false
-        focusRing.frame = tileLayout.frame(of: row).offsetBy(dx: 0, dy: -base).insetBy(dx: -2, dy: -2)
+        // Tiles at the edge of the document have no room for the ring outside them.
+        let document = CGRect(x: 0, y: 0, width: tileLayout.width, height: tileLayout.contentHeight)
+        focusRing.frame = tileLayout.frame(of: row).insetBy(dx: -2, dy: -2).intersection(document)
+            .offsetBy(dx: 0, dy: -base)
     }
 
     // MARK: BrowserContent
@@ -511,6 +550,7 @@ final class TileGridView: NSView, BrowserContent {
 
     func resultDidChange(_ result: BrowseResult, anchor: ViewAnchor?, rows: AspectRows?, prefix: [Double]) {
         self.result = result
+        tileAnimation = nil
         fullPassGeneration += 1
         // Tile objects stay, but they may now show other rows.
         recycleAll()
@@ -540,7 +580,7 @@ final class TileGridView: NSView, BrowserContent {
     func selectionDidChange() {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        for (row, tile) in tiles { setSelected(tile, model.selection.isSelected(row)) }
+        for (row, tile) in tiles { setSelected(tile, showsSelected(row)) }
         CATransaction.commit()
         needsFocusPlacement = true
         updateAccessibilityValue()
@@ -587,11 +627,24 @@ final class TileGridView: NSView, BrowserContent {
             tileLayout.resize(width: tileLayout.width, tile: CGFloat(model.tileSize))
             return
         }
+        guard tileLayout.mode == .square else {
+            beginProgrammaticZoom()
+            zoom(to: CGFloat(model.tileSize))
+            return
+        }
+        // The size only chooses the column count, so most steps of the slider change nothing.
+        let filled = tileLayout.filledTile(for: CGFloat(model.tileSize))
+        guard filled != tileAnimation?.to ?? tileLayout.tile else { return }
         beginProgrammaticZoom()
-        zoom(to: CGFloat(model.tileSize))
+        animateTile(to: filled)
+    }
+
+    func steppedTileSize(from size: CGFloat, larger: Bool) -> CGFloat {
+        tileLayout.steppedSize(from: size, larger: larger)
     }
 
     func layoutModeDidChange() {
+        tileAnimation = nil
         let anchor = captureAnchor()
         tileLayout.setMode(model.layoutMode)
         tileLayout.resize(width: tileLayout.width, tile: CGFloat(model.tileSize))
@@ -619,13 +672,14 @@ final class TileGridView: NSView, BrowserContent {
 
     /// Starts a pinch, anchored on the tile under the cursor.
     func beginZoom(at point: CGPoint) {
+        cancelBand()
         let top = viewportTop
         let hit = tileLayout.index(at: point) ?? tileLayout.closest(to: point)
         zoomAnchor = hit.map { ViewAnchor(row: $0, screenY: tileLayout.frame(of: $0).midY - top) }
     }
 
     /// One step. The anchor stays where it is vertically, and sideways as far as rows allow.
-    func zoom(to tile: CGFloat) {
+    func zoom(to tile: CGFloat, columns: Int? = nil) {
         guard let anchor = zoomAnchor, result.count > 0 else { return }
         let interval = Self.signposter.beginInterval("Zoom step")
         defer { Self.signposter.endInterval("Zoom step", interval) }
@@ -633,7 +687,8 @@ final class TileGridView: NSView, BrowserContent {
         let version = tileLayout.structureVersion
         let anchorX = tileLayout.frame(of: anchor.row).midX
         tileLayout.zoom(
-            width: tileLayout.width, tile: tile, anchor: anchor.row, anchorX: anchorX, coverage: viewportHeight * 2)
+            width: tileLayout.width, tile: tile, anchor: anchor.row, anchorX: anchorX, coverage: viewportHeight * 2,
+            columns: columns)
         let oldPositions = tileLayout.structureVersion != version ? screenPositions() : nil
         applyContentHeight()
         scrollAnchorIntoPlace(anchor)
@@ -647,7 +702,37 @@ final class TileGridView: NSView, BrowserContent {
         startTicking()
     }
 
+    /// Goes to `size` with the column count it gives, so that rows reflow as the size starts to change.
+    private func animateTile(to size: CGFloat) {
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            tileAnimation = nil
+            zoom(to: size)
+            return
+        }
+        isZooming = true
+        tileAnimation = (tileLayout.tile, size, CACurrentMediaTime())
+        startTicking()
+    }
+
+    private func stepTileAnimation() {
+        guard let animation = tileAnimation else { return }
+        let progress = min(1, (CACurrentMediaTime() - animation.start) / Self.tileAnimationDuration)
+        let eased = 1 - pow(1 - progress, 3)
+        if progress == 1 { tileAnimation = nil }
+        zoom(
+            to: animation.from + (animation.to - animation.from) * eased,
+            columns: tileLayout.columns(for: animation.to))
+    }
+
     private func finishZoom() {
+        // A pinch can stop at any size, and a square grid at rest fills the width.
+        if tileLayout.mode == .square {
+            let filled = tileLayout.filledTile(for: tileLayout.tile)
+            if abs(filled - tileLayout.tile) > 0.01 {
+                animateTile(to: filled)
+                return
+            }
+        }
         isZooming = false
         if tileLayout.isLocal, let anchor = zoomAnchor { startFullPass(anchor: anchor.row) } else { zoomAnchor = nil }
         needsThumbnailRequests = true
@@ -729,9 +814,22 @@ final class TileGridView: NSView, BrowserContent {
 
     func handleMouseDown(_ event: NSEvent) {
         window?.makeFirstResponder(document)
+        cancelBand()
+        selectOnRelease = nil
         let point = document.convert(event.locationInWindow, from: nil)
-        guard let row = tileLayout.index(at: point) else {
-            if !event.modifierFlags.contains(.command), !event.modifierFlags.contains(.shift) { model.selectNone() }
+        let extending = !event.modifierFlags.isDisjoint(with: [.command, .shift])
+        let row = tileLayout.index(at: point)
+        // Tiles nearly fill the view, so a band can start on one. A selected tile is kept for dragging
+        // files out, which comes with Milestone 3.
+        let onSelected = row.map(model.selection.isSelected) == true
+        press = onSelected ? nil : (point, extending)
+        guard let row else {
+            if !extending { model.selectNone() }
+            return
+        }
+        if onSelected, !extending {
+            // A multiple selection has to survive this press, in case it's the start of a file drag.
+            selectOnRelease = row
             return
         }
         if event.modifierFlags.contains(.shift) {
@@ -743,12 +841,118 @@ final class TileGridView: NSView, BrowserContent {
         }
     }
 
+    func handleMouseDragged(_ event: NSEvent) {
+        bandPointer = event.locationInWindow
+        if band == nil {
+            let point = document.convert(bandPointer, from: nil)
+            if let row = selectOnRelease, tileLayout.index(at: point) != row { selectOnRelease = nil }
+            guard let press, hypot(point.x - press.point.x, point.y - press.point.y) >= RubberBand.startDistance else {
+                return
+            }
+            beginBand(from: press)
+        }
+        updateBand()
+    }
+
+    func handleMouseUp(_ event: NSEvent) {
+        press = nil
+        if let row = selectOnRelease {
+            selectOnRelease = nil
+            model.select(row: row)
+        }
+        guard band != nil else { return }
+        bandPointer = event.locationInWindow
+        updateBand()
+        finishBand()
+    }
+
+    private func beginBand(from press: (point: CGPoint, extending: Bool)) {
+        band = RubberBand(origin: press.point, base: press.extending ? model.selection.rows : IndexSet())
+        lastBandFrame = .now
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            bandLayer.borderColor = NSColor.selectedContentBackgroundColor.cgColor
+            bandLayer.backgroundColor = NSColor.selectedContentBackgroundColor.withAlphaComponent(0.2).cgColor
+        }
+        bandLayer.isHidden = false
+        CATransaction.commit()
+        startTicking()
+    }
+
+    /// Follows the pointer. The cost is what's on screen, however much of the library the band covers.
+    private func updateBand() {
+        guard var band else { return }
+        band.drag(to: document.convert(bandPointer, from: nil))
+        self.band = band
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        // Edges past the viewport stay out of sight, and layer coordinates stay small.
+        let viewport = CGRect(x: 0, y: viewportTop, width: tileLayout.width, height: viewportHeight)
+        bandLayer.frame = band.rect.intersection(viewport.insetBy(dx: -2, dy: -2)).offsetBy(dx: 0, dy: -base)
+        for (row, tile) in tiles {
+            let selected = band.covers(row, in: tileLayout)
+            if selected != tile.showsSelection { setSelected(tile, selected) }
+        }
+        CATransaction.commit()
+    }
+
+    /// Scrolls while the pointer is past the top or bottom, including when it isn't moving.
+    private func scrollForBand() {
+        guard band != nil else { return }
+        let now = ContinuousClock.now
+        let elapsed = CGFloat((now - lastBandFrame) / .seconds(1))
+        lastBandFrame = now
+        let pointerY = document.convert(bandPointer, from: nil).y - viewportTop
+        let speed = RubberBand.scrollSpeed(pointerY: pointerY, viewportHeight: viewportHeight)
+        if speed != 0 { scroll(toTop: viewportTop + speed * min(elapsed, 0.05)) }
+    }
+
+    /// Stops following the pointer, and works out the rows off the main thread. Until they land, tiles
+    /// keep asking the band, so nothing flickers.
+    private func finishBand() {
+        guard let band else { return }
+        bandLayer.isHidden = true
+        let layout = tileLayout
+        let result = result
+        let version = model.selection.version
+        let pointer = document.convert(bandPointer, from: nil)
+        Task { [weak self] in
+            let rows = await Task.detached(priority: .userInitiated) { band.rows(in: layout) }.value
+            guard let self, self.band != nil else { return }
+            self.band = nil
+            // A key press or a new folder got there first, and that wins.
+            guard result === self.result, version == self.model.selection.version else {
+                self.selectionDidChange()
+                return
+            }
+            if rows.isEmpty {
+                self.model.selectNone()
+            } else {
+                let nearest = layout.closest(to: pointer).flatMap { rows.contains($0) ? $0 : nil }
+                self.model.adoptSelection(rows: rows, current: nearest ?? rows.last)
+            }
+        }
+    }
+
+    private func cancelBand() {
+        press = nil
+        guard band != nil else { return }
+        band = nil
+        bandLayer.isHidden = true
+        selectionDidChange()
+    }
+
     func handleMagnify(_ event: NSEvent) {
+        tileAnimation = nil
         if event.phase == .began || zoomAnchor == nil {
             beginZoom(at: document.convert(event.locationInWindow, from: nil))
         }
+        isPinching = !event.phase.isDisjoint(with: [.began, .changed, .stationary])
         let size = tileLayout.tile * (1 + event.magnification)
-        model.setTileSizeFromGesture(min(max(size, TileMetrics.minimumTile), TileMetrics.maximumTile))
+        // A filled tile can be over the limit, and a pinch shouldn't start by jumping down to it.
+        let largest = max(TileMetrics.maximumTile, tileLayout.tile)
+        model.setTileSizeFromGesture(min(max(size, TileMetrics.minimumTile), largest))
         zoom(to: CGFloat(model.tileSize))
     }
 
@@ -762,11 +966,16 @@ final class TileGridView: NSView, BrowserContent {
     // MARK: Measuring
 
     func zoomForMeasuring(to tile: CGFloat, anchor point: CGPoint) {
+        tileAnimation = nil
         if zoomAnchor == nil { beginZoom(at: CGPoint(x: point.x, y: point.y + viewportTop)) }
         zoom(to: tile)
     }
 
+    var isZoomingForTesting: Bool { isZooming }
     var layoutTile: CGFloat { tileLayout.tile }
+    var isTrackingBandForTesting: Bool { band != nil }
+    var isShowingBandForTesting: Bool { !bandLayer.isHidden }
+    func showsSelectedForTesting(row: Int) -> Bool? { tiles[row]?.showsSelection }
     var visibleTileCount: Int { tiles.count }
     var visibleThumbnailCount: Int { tiles.values.filter { $0.shownTier != nil }.count }
     var scrollTopForMeasuring: CGFloat { viewportTop }

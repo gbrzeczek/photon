@@ -112,10 +112,15 @@ struct AspectRows: Sendable {
 /// the anchor where it is. Square layouts use `phase`, which is blank cells before the first item.
 /// Aspect-ratio layouts break rows around the anchor. Rows stay that way afterward, because the full
 /// pass starts from the same row, and `settle` clears them once the top of the library is on screen.
+///
+/// **Filling the width.** Square tiles at rest fill the width exactly, so the size asked for only chooses
+/// the column count, and the tile is whatever fits that many columns. Only a zoom in progress shows other
+/// sizes, which leaves margins until the zoom ends and the grid eases to `filledTile(for:)`.
 struct TileLayout {
     let spacing = TileMetrics.spacing
     private(set) var mode: TileLayoutMode
     private(set) var width: CGFloat = 1
+    /// The size on screen. Square tiles at rest are bigger than the size asked for.
     private(set) var tile: CGFloat = TileMetrics.defaultTile
 
     private(set) var aspects: [Float] = []
@@ -141,9 +146,10 @@ struct TileLayout {
     var isLocal: Bool { mode == .aspect && !fullIsValid }
     private var pitch: CGFloat { tile + spacing }
 
-    /// Left and right margins, so that a square grid stays centered as tiles change size.
+    /// Left and right margins, so that a square grid stays centered during a zoom. Zero at rest, and
+    /// negative for a moment when a zoom adds columns before its tiles have shrunk.
     private var margin: CGFloat {
-        max(0, (width - (CGFloat(columns) * pitch - spacing)) / 2)
+        (width - (CGFloat(columns) * pitch - spacing)) / 2
     }
 
     private var rows: AspectRows { fullIsValid ? full : local }
@@ -200,9 +206,9 @@ struct TileLayout {
     /// Changes size or width with no anchor, as at first layout.
     mutating func resize(width: CGFloat, tile: CGFloat) {
         self.width = max(width, 1)
-        self.tile = tile
         let previous = columns
-        updateColumns()
+        columns = Self.columns(width: self.width, tile: tile, spacing: spacing)
+        self.tile = mode == .square ? filledTile(columns: columns) : tile
         if mode == .square {
             if previous != columns {
                 phase = 0
@@ -214,8 +220,34 @@ struct TileLayout {
         }
     }
 
-    private mutating func updateColumns() {
-        columns = max(1, Int((width + spacing) / pitch))
+    /// Rounds up a hair, because a filled tile has to get its own column count back.
+    private static func columns(width: CGFloat, tile: CGFloat, spacing: CGFloat) -> Int {
+        max(1, Int((width + spacing) / (tile + spacing) + 1e-6))
+    }
+
+    private func filledTile(columns: Int) -> CGFloat {
+        (width + spacing) / CGFloat(columns) - spacing
+    }
+
+    /// The column count that a square tile of `size` gives at this width.
+    func columns(for size: CGFloat) -> Int {
+        Self.columns(width: width, tile: size, spacing: spacing)
+    }
+
+    /// The square tile that fills the width, in the columns that `size` gives.
+    func filledTile(for size: CGFloat) -> CGFloat {
+        filledTile(columns: columns(for: size))
+    }
+
+    /// The size for Command-Equals and Command-Minus. Large tiles span many sizes per column count, so
+    /// where the usual step would change nothing, this goes to the middle of the next count's sizes,
+    /// which leaves room to resize the window before the count changes again.
+    func steppedSize(from size: CGFloat, larger: Bool) -> CGFloat {
+        let step = size * (larger ? 1.25 : 0.8)
+        guard mode == .square, columns(for: step) == columns(for: size) else { return step }
+        let next = columns(for: size) + (larger ? -1 : 1)
+        guard next >= 1 else { return step }
+        return (filledTile(columns: next) + filledTile(columns: next + 1)) / 2
     }
 
     // MARK: Zooming
@@ -226,14 +258,17 @@ struct TileLayout {
     ///   - anchor: The item to keep in place.
     ///   - anchorX: Where its center is now, in layout coordinates.
     ///   - coverage: The vertical span the local layout should reach, around the anchor.
-    mutating func zoom(width: CGFloat, tile: CGFloat, anchor: Int, anchorX: CGFloat, coverage: CGFloat) {
+    ///   - columns: A square grid's column count, if it shouldn't follow from `tile`.
+    mutating func zoom(
+        width: CGFloat, tile: CGFloat, anchor: Int, anchorX: CGFloat, coverage: CGFloat, columns fixed: Int? = nil
+    ) {
         guard count > 0 else { return resize(width: width, tile: tile) }
         self.width = max(width, 1)
         self.tile = tile
         switch mode {
         case .square:
             let previous = columns
-            updateColumns()
+            columns = fixed ?? self.columns(for: tile)
             guard previous != columns else { return }
             let column = max(0, min(columns - 1, Int((anchorX - margin) / pitch)))
             phase = ((column - anchor) % columns + columns) % columns

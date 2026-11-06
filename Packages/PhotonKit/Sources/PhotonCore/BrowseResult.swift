@@ -114,6 +114,12 @@ public struct BrowseFolder: Hashable, Sendable {
     public var volume: VolumeID
     public var path: String
     public var isRoot: Bool
+
+    public init(volume: VolumeID, path: String, isRoot: Bool) {
+        self.volume = volume
+        self.path = path
+        self.isRoot = isRoot
+    }
 }
 
 /// The saved state of a folder's view, anchored to an asset and never to a pixel offset.

@@ -40,6 +40,83 @@ struct TileLayoutTests {
         #expect(layout.frame(of: 9).minY == first.maxY + layout.spacing)
     }
 
+    @Test("At rest, square tiles fill the width exactly, whatever size was asked for")
+    func squareFillsWidth() {
+        for width in stride(from: CGFloat(300), through: 3000, by: 37.5) {
+            for tile in stride(from: CGFloat(64), through: 400, by: 7) {
+                let layout = square(count: 1000, width: width, tile: tile)
+                let last = layout.frame(of: layout.columns - 1)
+                #expect(abs(layout.frame(of: 0).minX) < 0.001)
+                #expect(abs(last.maxX - width) < 0.001)
+                #expect(layout.tile >= tile || layout.columns == 1)
+            }
+        }
+    }
+
+    @Test("A filled tile gets its own column count back")
+    func filledTileIsStable() {
+        for width in stride(from: CGFloat(300), through: 3000, by: 11.3) {
+            let layout = square(count: 1000, width: width, tile: 100)
+            #expect(layout.columns(for: layout.tile) == layout.columns)
+            #expect(layout.filledTile(for: layout.tile) == layout.tile)
+        }
+    }
+
+    @Test("A zoom shows the exact size, with margins, until it fills the width again")
+    func zoomKeepsExactSize() {
+        var layout = square(count: 1000, width: 1000, tile: 100)
+        layout.zoom(width: 1000, tile: 104, anchor: 10, anchorX: 300, coverage: 1000)
+        #expect(layout.tile == 104)
+        #expect(layout.frame(of: 0).minX > 0)
+        let filled = layout.filledTile(for: layout.tile)
+        layout.zoom(width: 1000, tile: filled, anchor: 10, anchorX: 300, coverage: 1000)
+        #expect(abs(layout.frame(of: layout.columns - 1).maxX - 1000) < 0.001 || layout.phase != 0)
+        #expect(abs(layout.frame(of: 0).minX) < filled + 3)
+    }
+
+    @Test("A zoom can reflow to its final column count before its tiles have changed size")
+    func zoomWithFixedColumns() {
+        var layout = square(count: 1000, width: 1000, tile: 100)
+        let start = layout.structureVersion
+        layout.zoom(width: 1000, tile: layout.tile, anchor: 10, anchorX: 300, coverage: 1000, columns: 10)
+        #expect(layout.columns == 10)
+        #expect(layout.structureVersion == start + 1)
+        var visited = 0
+        layout.forEach(in: CGRect(x: 0, y: 0, width: 1000, height: 200)) { _, _ in visited += 1 }
+        #expect(visited > 0)
+    }
+
+    @Test("Every shortcut step changes the column count, until the size limits")
+    func stepsChangeColumns() {
+        var size: CGFloat = 200
+        var layout = square(count: 1000, width: 1272, tile: size)
+        var previous = layout.columns
+        while true {
+            size = min(layout.steppedSize(from: size, larger: true), TileMetrics.maximumTile)
+            layout.resize(width: 1272, tile: size)
+            if size == TileMetrics.maximumTile || layout.columns == previous { break }
+            #expect(layout.columns < previous)
+            previous = layout.columns
+        }
+        #expect(layout.columns == 3)
+        while size > TileMetrics.minimumTile {
+            size = max(layout.steppedSize(from: size, larger: false), TileMetrics.minimumTile)
+            let before = layout.columns
+            layout.resize(width: 1272, tile: size)
+            #expect(layout.columns > before || size == TileMetrics.minimumTile)
+        }
+    }
+
+    @Test("A step leaves room to narrow the window before the column count changes")
+    func stepsLeaveRoom() {
+        var layout = square(count: 1000, width: 1272, tile: 360)
+        let size = layout.steppedSize(from: 360, larger: false)
+        layout.resize(width: 1272, tile: size)
+        let columns = layout.columns
+        layout.resize(width: 1262, tile: size)
+        #expect(layout.columns == columns)
+    }
+
     @Test("forEach visits only what meets the rectangle, in order")
     func forEachIsBounded() {
         let layout = square(count: 1_000_000)

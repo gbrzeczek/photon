@@ -7,6 +7,7 @@ struct PhotonApp: App {
         WindowGroup {
             PhotonRootView()
         }
+        .defaultSize(width: 1280, height: 800)
         .commands { PhotonCommands() }
     }
 }

@@ -15,8 +15,10 @@ final class KeyboardNavigationUITests: XCTestCase {
         app = XCUIApplication()
         app.launchEnvironment["PHOTON_LIBRARY"] = library
         app.launch()
+        // The library remembers its last view, and the test before this one may have ended in the list.
+        app.typeKey("1", modifierFlags: .command)
         XCTAssertTrue(grid.waitForExistence(timeout: 10))
-        grid.click()
+        tiles.click()
     }
 
     override func tearDown() {
@@ -24,6 +26,8 @@ final class KeyboardNavigationUITests: XCTestCase {
     }
 
     private var grid: XCUIElement { app.descendants(matching: .any)["photon.grid"] }
+    /// The viewport. `grid` is as tall as the whole library, so offsets into it land off screen.
+    private var tiles: XCUIElement { app.descendants(matching: .any)["photon.tiles"] }
     private var status: XCUIElement { app.descendants(matching: .any)["photon.status"] }
     private var position: String { grid.value as? String ?? "" }
 
@@ -50,6 +54,20 @@ final class KeyboardNavigationUITests: XCTestCase {
         XCTAssertFalse(position.hasSuffix(" 0 selected"), position)
         app.typeKey("a", modifierFlags: [.command, .shift])
         XCTAssertTrue(position.hasSuffix(" 0 selected"), position)
+    }
+
+    func testDraggingSelectsARectangle() {
+        app.typeKey("a", modifierFlags: [.command, .shift])
+        let start = tiles.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.2))
+        let end = tiles.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.7))
+        // On the Mac this has to be `click`. `press` compiles, but no event reaches the app.
+        start.click(forDuration: 0.1, thenDragTo: end)
+        let expectation = expectation(
+            for: NSPredicate { [weak self] _, _ in
+                guard let self else { return false }
+                return !self.position.hasSuffix(" 0 selected") && !self.position.hasSuffix(" 1 selected")
+            }, evaluatedWith: nil)
+        wait(for: [expectation], timeout: 5)
     }
 
     func testSwitchingToTheListKeepsTheCurrentItem() {

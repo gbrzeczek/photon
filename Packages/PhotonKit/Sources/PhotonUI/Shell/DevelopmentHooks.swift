@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 /// Launch-time switches for checking the app from outside, set through the environment:
 /// `PHOTON_APPEARANCE` forces light or dark, and `PHOTON_SNAPSHOT` saves the window to a PNG after
 /// `PHOTON_SNAPSHOT_DELAY` seconds. A process may capture its own window with no permission.
+/// `PHOTON_WINDOW` fills a display, `main` or `builtin`, so that measurements compare like with like.
 @MainActor
 enum DevelopmentHooks {
     static func applyAppearance() {
@@ -13,6 +14,18 @@ enum DevelopmentHooks {
         case "dark": NSApplication.shared.appearance = NSAppearance(named: .darkAqua)
         case "light": NSApplication.shared.appearance = NSAppearance(named: .aqua)
         default: break
+        }
+    }
+
+    static func placeWindow(of view: NSView) {
+        guard let choice = ProcessInfo.processInfo.environment["PHOTON_WINDOW"] else { return }
+        DispatchQueue.main.async { [weak view] in
+            let screen = NSScreen.screens.first { screen in
+                let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+                return choice == "builtin" ? id.map { CGDisplayIsBuiltin($0) != 0 } == true : screen == NSScreen.main
+            }
+            guard let screen, let window = view?.window else { return }
+            window.setFrame(screen.visibleFrame, display: true)
         }
     }
 

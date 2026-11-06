@@ -305,6 +305,31 @@ struct BrowsingTests {
         #expect(anchor.row == next.selection.currentRow)
     }
 
+    @Test("Quitting right after a change keeps it, with no wait for the save delay")
+    func quitSaves() async throws {
+        let browser = try await BrowserFixture()
+        defer { browser.tearDown() }
+        browser.model.setViewMode(.list)
+        browser.model.saveSessionBeforeQuit()
+        let session = try #require(try await browser.library.store.latestSession())
+        #expect(session.viewMode == BrowserViewMode.list.rawValue)
+    }
+
+    @Test("The hidden list does no table work, and catches up when it shows")
+    func hiddenListWaits() async throws {
+        let browser = try await BrowserFixture()
+        defer { browser.tearDown() }
+        #expect(browser.list.table.numberOfRows == 0)
+        browser.press(.right)
+        browser.press(.right)
+        #expect(browser.list.table.selectedRowIndexes.isEmpty)
+        browser.model.setViewMode(.list)
+        #expect(browser.list.table.numberOfRows == 300)
+        #expect(browser.list.table.selectedRowIndexes == IndexSet(integer: 1))
+        await browser.waitForResult { browser.model.setSort(BrowseSort(key: .size, ascending: false)) }
+        #expect(browser.list.table.sortDescriptors.first?.key == SortKey.size.rawValue)
+    }
+
     @Test("A pinch keeps the tile under the cursor vertically, to within half a device pixel")
     func zoomAnchor() async throws {
         let browser = try await BrowserFixture(count: 10_000)

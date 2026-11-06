@@ -10,6 +10,7 @@ extension FocusedValues {
 /// The app's window: folders in the sidebar, and the grid or list beside them.
 public struct PhotonRootView: View {
     @State private var state: LoadState = .loading
+    @State private var quitObserver: (any NSObjectProtocol)?
     private let launch: LaunchSettings
 
     private enum LoadState {
@@ -45,9 +46,14 @@ public struct PhotonRootView: View {
             let library = BrowserLibrary(handle)
             let model = BrowserModel(library: library)
             model.setLayoutMode(launch.layoutMode)
-            state = .ready(library, model)
             // The last session comes first: it's what launch is measured by, and it needs no volumes.
             let restored = await model.restoreLastSession()
+            state = .ready(library, model)
+            quitObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+            ) { [weak model] _ in
+                MainActor.assumeIsolated { model?.saveSessionBeforeQuit() }
+            }
             await library.start()
             if !restored { model.openFirstFolder() }
         } catch {
@@ -105,30 +111,7 @@ private struct BrowserShell: View {
                 .background(.background)
             }
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) { statusBar }
-    }
-
-    private var statusBar: some View {
-        HStack {
-            Text(status)
-            Spacer()
-            if let message = library.lastError ?? (library.activity.isEmpty ? nil : library.activity) {
-                Text(message).lineLimit(1)
-            }
-        }
-        .font(.callout)
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 5)
-        .background(.bar)
-        .accessibilityIdentifier("photon.status")
-    }
-
-    private var status: String {
-        let items = model.itemCount.formatted()
-        let noun = model.itemCount == 1 ? "item" : "items"
-        return model.selectedCount > 0
-            ? "\(model.selectedCount.formatted()) of \(items) selected" : "\(items) \(noun)"
+        .safeAreaInset(edge: .bottom, spacing: 0) { StatusBar(library: library, model: model) }
     }
 
     @ToolbarContentBuilder
@@ -140,13 +123,7 @@ private struct BrowserShell: View {
         }
         ToolbarItemGroup {
             if model.viewMode == .tiles {
-                Slider(
-                    value: Binding(get: { model.tileSize }, set: { model.setTileSizeFromSlider($0) }),
-                    in: Double(TileMetrics.minimumTile)...Double(TileMetrics.maximumTile)
-                )
-                .frame(width: 120)
-                .accessibilityLabel("Tile size")
-                .help("Tile size")
+                TileSizeSlider(model: model)
             }
             Picker(
                 "View",
@@ -175,6 +152,50 @@ private struct BrowserShell: View {
         if panel.runModal() == .OK, let url = panel.url {
             library.addFolder(url)
         }
+    }
+}
+
+/// Its own view, like `TileSizeSlider`, because these values change often. Reading them in `BrowserShell`
+/// would rebuild the toolbar for every step of a pinch and every change of selection.
+private struct StatusBar: View {
+    let library: BrowserLibrary
+    let model: BrowserModel
+
+    var body: some View {
+        HStack {
+            Text(status)
+            Spacer()
+            if let message = library.lastError ?? (library.activity.isEmpty ? nil : library.activity) {
+                Text(message).lineLimit(1)
+            }
+        }
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 5)
+        .background(.bar)
+        .accessibilityIdentifier("photon.status")
+    }
+
+    private var status: String {
+        let items = model.itemCount.formatted()
+        let noun = model.itemCount == 1 ? "item" : "items"
+        return model.selectedCount > 0
+            ? "\(model.selectedCount.formatted()) of \(items) selected" : "\(items) \(noun)"
+    }
+}
+
+private struct TileSizeSlider: View {
+    let model: BrowserModel
+
+    var body: some View {
+        Slider(
+            value: Binding(get: { model.tileSize }, set: { model.setTileSizeFromSlider($0) }),
+            in: Double(TileMetrics.minimumTile)...Double(TileMetrics.maximumTile)
+        )
+        .frame(width: 120)
+        .accessibilityLabel("Tile size")
+        .help("Tile size")
     }
 }
 
@@ -217,42 +238,9 @@ private struct FolderSidebar: View {
     let model: BrowserModel
     let addFolder: () -> Void
 
-    private struct Node: Identifiable, Hashable {
-        var scope: BrowseScope
-        var name: String
-        var children: [Node]?
-        var id: BrowseScope { scope }
-    }
-
-    private var roots: [Node] {
-        var result: [Node] = []
-        var byRoot: [(root: BrowseFolder, members: [BrowseFolder])] = []
-        for folder in library.folders {
-            if folder.isRoot {
-                byRoot.append((folder, []))
-            } else if !byRoot.isEmpty {
-                byRoot[byRoot.count - 1].members.append(folder)
-            }
-        }
-        for (root, members) in byRoot {
-            let volumeName = library.volumes.first { $0.volume.id == root.volume }?.volume.name ?? "Volume"
-            let scope = BrowseScope(volume: root.volume, path: root.path)
-            let name = root.path.split(separator: "/").last.map(String.init) ?? volumeName
-            result.append(Node(scope: scope, name: name, children: children(of: root.path, in: members, volume: root.volume)))
-        }
-        return result
-    }
-
-    private func children(of parent: String, in folders: [BrowseFolder], volume: VolumeID) -> [Node]? {
-        let prefix = parent.isEmpty ? "" : parent + "/"
-        let direct = folders.filter { $0.path.hasPrefix(prefix) && !$0.path.dropFirst(prefix.count).contains("/") }
-        guard !direct.isEmpty else { return nil }
-        return direct.map { folder in
-            let name = String(folder.path.dropFirst(prefix.count))
-            let inside = folders.filter { $0.path.hasPrefix(folder.path + "/") }
-            return Node(
-                scope: BrowseScope(volume: volume, path: folder.path), name: name,
-                children: children(of: folder.path, in: inside, volume: volume))
+    private var roots: [FolderNode] {
+        FolderTree.build(library.folders) { root in
+            library.volumes.first { $0.volume.id == root.volume }?.volume.name ?? "Volume"
         }
     }
 
@@ -271,7 +259,7 @@ private struct FolderSidebar: View {
         .accessibilityIdentifier("photon.sidebar")
     }
 
-    private func isOnline(_ node: Node) -> Bool { library.onlineVolumes.contains(node.scope.volume) }
+    private func isOnline(_ node: FolderNode) -> Bool { library.onlineVolumes.contains(node.scope.volume) }
 }
 
 /// The app's menus, with their shortcuts. Each one acts on the focused window's browser.

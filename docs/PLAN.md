@@ -2,7 +2,7 @@
 
 Photon is a native macOS browser for photos and videos stored in local folders and on removable media. This document records the product scope, architecture, milestones and open risks.
 
-**Status:** Milestone 2 is built and its tests pass, but it isn't done: the on-screen budgets and the T7 Touch haven't been measured. See [Milestone 2 results](#milestone-2-results). Spike code lives in [`Spikes/`](../Spikes/README.md), and results are under [Milestone 0 spikes](#milestone-0-spikes) and [Milestone 1 results](#milestone-1-results).
+**Status:** Milestone 2 is built and measured on a real screen, on a seeded 100k library on the internal disk and on the T7 Touch's real library of 27,235 photos. The drive doesn't hold 100k files, so those two together stand in for a 100k library on the drive. See [Milestone 2 results](#milestone-2-results). Spike code lives in [`Spikes/`](../Spikes/README.md), and results are under [Milestone 0 spikes](#milestone-0-spikes) and [Milestone 1 results](#milestone-1-results).
 
 ## Product scope
 
@@ -162,13 +162,16 @@ First-time indexing takes about 30 minutes per 100k photos at full speed, and ab
 
 - Grid and list share one data source and selection model.
 - A query result is a compact array of row IDs, and rows load in pages as they're needed.
-- Tile size is continuous, through a slider, pinch and Cmd-plus or Cmd-minus. The tile under the cursor stays anchored vertically, to within half a device pixel, because the clip view snaps to pixels.
+- Square tiles always fill the width at rest, as in Photos on iOS, with no side margins. The size chosen only sets the column count, and the tile is whatever fits that many columns. A pinch follows the fingers exactly, with margins while it lasts, and eases to fill the width when it ends. The slider and Cmd-plus or Cmd-minus ease from one column count to the next, and a shortcut always changes the count unless the size limit stops it. Window resizing stays filled throughout. Reduce Motion turns the easing off. Aspect-ratio rows already fill the width, and their size stays continuous.
+- The tile under the cursor stays anchored vertically, to within half a device pixel, because the clip view snaps to pixels.
 - **Sideways jumps:** when the column count changes, rows break so that the anchor stays in its column, which adds blank cells before the first item (`phase`). Each tile then slides from its old position with an additive animation, so the frames of a continuing pinch carry on underneath. Reduce Motion turns the slide off. The blank cells clear, with the same slide, once the top of the library is on screen.
 - Layouts are square and aspect-ratio. During a zoom, aspect-ratio rows are built outward from the anchor, only as far as they're looked at, and heights come from an estimate. The full pass runs off the main thread afterward and breaks rows at the same place, so nothing visibly moves when it lands.
 - Tile layers use coordinates relative to a coarsely moving base, and never document coordinates, which reach tens of millions of points.
 - Accessibility, hit testing, selection, drag source, context menus and focus rings are hand-built, since `CALayer` provides none of them.
 - If capture dates arrive during a sort, the list re-sorts around the anchor so that the view doesn't jump. While indexing, the query runs at most every 2 seconds, and everything proportional to the library happens off the main thread: the query, the layout pass, and the map from old rows to new ones.
 - Selection is ranges of rows, so selecting 100k items costs one range. The map above carries it across a change of order.
+- **Rubber band.** Tiles nearly fill the view, so a band can start on any tile that isn't selected, and on the gaps. A selected tile is kept for dragging files out in Milestone 3, so a plain click on one narrows the selection only when the button comes up. Command or Shift keeps what was already selected. Holding the pointer past the top or bottom scrolls, faster the further past. Tiles on screen check the rectangle directly, and the rows are worked out once, off the main thread, when the button comes up, so a band over the whole library costs only what's visible on each frame. The status bar's count catches up then too.
+- **The list stays alive but idle while hidden.** A hidden `NSTableView` still lays out rows and makes cells, and that cost the grid hitches of up to 46 ms. It takes the result and the selection when it next shows.
 
 ### Viewer
 
@@ -273,17 +276,17 @@ docs/                Project documentation
 
 ## Performance budgets
 
-These are targets for an M4 Max. Spike 1 measured the grid on a synthetic library of 200k items at 120 Hz, on battery power, with scripted input. The rest are unmeasured until Milestone 2.
+These are targets for an M4 Max. The figures below are from a release build on a seeded library of 100k items on the internal disk, at 120 Hz, with the window filling the display. Spike 1's own figures, from its 200k library, are under [Spike 1](#spike-1-grid-zoom-and-navigation).
 
 | Measure | Target | Measured |
 |---|---|---|
-| Launch to usable window with last session | Under 300 ms | Not yet |
-| Open an indexed 100k folder | Under 200 ms | Not yet |
-| Scrolling and zooming | Steady 120 fps | 120 fps from the display link. Instruments reported 21 single-frame hitches in about 18 seconds (1% of frames) |
-| Main thread time per frame | Under 8 ms, so that a frame is never at risk | Worst p99 5.5 ms, worst single frame 6.6 ms |
-| Render server time per frame | Under 8 ms | p99 6.3 ms, 3 of 2,284 frames over budget |
-| Holding an arrow key in grid, list or viewer | Keeps up with key repeat, with no dropped frames | Grid: no missed frames at 30 and at 240 key events per second. List and viewer not yet |
-| App memory in normal use | Under 1.5 GB | About 240–420 MB, with up to 1,500 thumbnails cached |
+| Launch to usable window with last session | About 350 ms | 320–345 ms to the result, 355–425 ms to the frame after it. The earlier target of 300 ms was arbitrary, so it was relaxed rather than replacing the SwiftUI shell |
+| Open an indexed 100k folder | Under 200 ms | 60–85 ms |
+| Scrolling and zooming | Steady 120 fps | 117.9–120 fps in the grid, which is at most 2 missed frames in a scenario. Instruments found 8–22 single-frame hitches in about 36 seconds in the larger window |
+| Main thread time per frame | Under 8 ms, so that a frame is never at risk | Worst p99 3.6 ms. Worst single frame 4.7 ms in the grid and 12.1 ms in the list |
+| Render server time per frame | Under 8 ms | p99 3.6–5.9 ms, worst 14.8 ms. 9 of 7,418 and 11 of 5,049 frames over budget |
+| Holding an arrow key in grid, list or viewer | Keeps up with key repeat, with no dropped frames | Grid and list keep up at 30 and 240 key events per second, and with Shift at 30. Viewer not yet |
+| App memory in normal use | Under 1.5 GB | About 460–600 MB after all the scenarios |
 
 The spike's in-app timers reported no missed frames in the same scenarios where Instruments found these hitches. Don't rely on the in-app numbers alone.
 
@@ -429,30 +432,77 @@ The tool was first validated on an exFAT disk image, and those numbers are in `S
 
 ### Milestone 2 results
 
-**Not finished.** Everything here was measured with the screen locked and the display asleep, so nothing was drawn. Frame rates, render server time and hitches are unmeasured, and the main-thread figures leave out what Core Animation costs when a window is really on screen. Treat them as a lower bound. These are from a release build on a seeded library of 100,000 items on the internal disk, on AC power, with thumbnails from shared templates.
+These are from a release build on a seeded library of 100,000 items on the internal disk, on AC power, with thumbnails from shared templates and the window filling the display: a 1x external display at 1680×973 pt and the Retina built-in display at 1272×872 pt, both at 120 Hz.
 
-| Measure | Target | Measured, display asleep |
-|---|---|---|
-| Launch to last session installed | Under 300 ms | About 370 ms, **over budget**. Nothing is on screen at this point, and most of it is before the window's view exists |
-| Open an indexed 100k folder | Under 200 ms | 58–72 ms, warm disk cache |
-| Scroll, 4,000 pt/s, main thread | Under 8 ms | p99 0.65 ms, worst 7.3 ms |
-| Fast scroll, 120,000 pt/s, main thread | Under 8 ms | p99 1.7 ms, worst 1.8 ms |
-| Zoom, 64–400 pt, main thread | Under 8 ms | p99 0.33 ms, worst 1.0 ms |
-| Grid arrow keys, 30 and 240 per second, main thread | Keeps up | p99 2.1 and 2.3 ms, worst 3.1 ms |
-| Memory after those scenarios | Under 1.5 GB | 350 MB |
+| Scenario, 1x and Retina | fps | Main thread p99 | Main thread worst |
+|---|---|---|---|
+| Scroll, 4,000 pt/s | 119.7, 117.9 | 2.1, 1.8 ms | 2.7, 2.4 ms |
+| Fast scroll, 120,000 pt/s | 120, 120 | 3.6, 2.8 ms | 4.3, 4.4 ms |
+| Zoom, 64–400 pt | 120, 120 | 1.8, 1.3 ms | 2.1, 2.1 ms |
+| Zoom, 64–128 pt | 120, 120 | 1.9, 1.2 ms | 3.2, 2.0 ms |
+| Grid arrow keys, 30 and 240 per second | 120, 120 | 2.8, 2.1 ms | 4.7, 4.1 ms |
+| Grid Shift-arrow, 30 per second | 119.3, 119.3 | 3.1, 2.2 ms | 4.2, 3.5 ms |
+| Switch to the list, once | 106, 107 | 6.1, 3.1 ms | 6.1, 3.1 ms |
+| List scroll, 4,000 pt/s | 119, 119.3 | 1.2, 0.9 ms | 12.1, 11.0 ms |
+| List arrow keys, 30 and 240 per second | 119.3–120 | Under 0.1 ms | 1.5 ms |
+| List Shift-arrow, 30 per second | 120, 120 | Under 0.1 ms | 0.2 ms |
 
-In a debug build, every sort of a 100k-file library took 190–310 ms. Release numbers for sorts other than date aren't measured.
+Those main-thread figures leave out Core Animation's commit, so they go with Instruments, which sees the whole frame:
+
+| Animation Hitches, all scenarios | Hitches after launch | Render server p50, p99, worst | Frames over 8 ms |
+|---|---|---|---|
+| Retina, before clipping tiles to the viewport | 1, single frame | 1.3, 3.6, 14.1 ms | 9 of 7,418 |
+| 1x, final code | 8, all single frames | 1.9, 5.9, 14.8 ms | 11 of 5,049 |
+
+Render frames over 8 ms recur about every 5 seconds, at the same points in the second, in both traces, and whatever Photon is doing. They look like something else on the system, but that isn't confirmed. The in-app timers reported up to 4 missed frames in list scrolling on traces where Instruments reported fewer, so the two still don't agree. Treat neither alone as the answer.
+
+**Launch was accepted at about 350 ms.** Warm launches take 320–345 ms to install the result, and 355–425 ms to the frame after it. About 120 ms passes before the root view exists, and about 170 ms goes on SwiftUI building the split view and toolbar on the main thread. Photon's own main-thread work is under 40 ms, and the query now runs alongside the window rather than after it, which took about 90 ms off. Getting under 300 ms would have meant replacing the SwiftUI toolbar and split view, for a target that was arbitrary. Cold launches, after a restart, aren't measured.
+
+What running on a real screen found, and fixed:
+
+- A hidden `NSTableView` still lays out rows and makes cells, which cost the grid hitches of up to 46 ms. The list now catches up when it shows.
+- Every launch ran the full query again 2 seconds in, because `refreshVolumes` reported a change even with none.
+- Reading the status and the slider value in `BrowserShell`'s body rebuilt the toolbar on every change, including each step of a pinch.
+- Tiles drew past the top of the viewport, behind the toolbar and title, because nothing clipped them. They didn't show this in `CARenderer`.
+- A change made in the last second before quitting was lost, so the app could reopen in the wrong view. The session is now saved on quit.
+- A plain press on one of several selected tiles collapsed the selection straight away, which would have ruled out dragging them.
+- The sidebar's folder tree was quadratic in the folders, on the main thread.
+
+Tested on a real screen:
+
+- XCUITests, through the running app with real events: arrow keys, Shift-arrow, Select All and None, keeping the current item across list and tiles, Tab into the sidebar and back, and dragging a rubber band. On the Mac a test must drag with `click(forDuration:thenDragTo:)`. `press` compiles, but no event reaches the app.
+- Light and dark, in the grid and the list, with the context menu and a rubber band in progress. Selection, focus and the video placeholder all read clearly.
 
 Tested with no display:
 
-- Real key events reach the grid and the list in a window that isn't shown, covering every implemented row of the shortcut table except Tab.
+- Real key events reach the grid and the list in a window that isn't shown, covering every implemented row of the shortcut table.
 - Add Folder runs end to end on a read-only exFAT image: indexing, browsing, thumbnails, and nothing written to the image. Only the open panel itself is left out.
 - After an unmount, browsing continues from stored thumbnails.
 - `CARenderer` drew the real layer tree in both appearances and both layouts. Thumbnails keep the right way up in flipped and unflipped layers, and P3 surfaces match the same image drawn directly.
 
-**Not verified:** anything on a real screen, including the slide when columns change, the SwiftUI shell, light and dark mode in the running app, Tab between panes, and the context menu. VoiceOver itself, and real trackpad pinch. List scrolling and list arrow keys under load. The XCUITests build but have never run. The T7 Touch: no thumbnails or browsing have been tried on it, because it needs a fresh approval. Scrolling through tiles with no thumbnail yet on a real drive. Video tile layout with real durations. Windows on the 120 Hz display versus the built-in one.
+#### On the T7 Touch
 
-**Not built:** rubber-band selection, and a compaction pass for packs.
+Measured on a release build, with the drive mounted read-only and the library in the scratchpad, never on the drive. `Photos` holds 29,052 files, which is 27,235 assets, and `GoPro` adds 1,450 files, all videos.
+
+| T7 Touch | Result |
+|---|---|
+| Index, `Photos` | 80 s at 368 files/s, reading 24.4 GB |
+| All thumbnails, 23,604 photos | 7 min 15 s, about 31 minutes per 100k. 3.8 GB, about 160 KB per photo, and 3 files failed |
+| Launch with this library, to the result | 350–365 ms |
+| Open `Photos` | 22–24 ms |
+| Grid scenarios, both displays | 120 fps, with main thread p99 under 2 ms and a worst frame of 2.9 ms |
+| List scroll and arrow keys, both displays | 119–120 fps, with main thread p99 about 1 ms |
+| Memory after all the scenarios | About 390 MB |
+| Animation Hitches, 1x window | 1 hitch of 50 ms at launch, then 22 single-frame hitches in about 37 s. Render server p50 2.0 ms, p99 4.6 ms, worst 14.2 ms, and 10 of 6,428 frames over 8 ms |
+
+**With thumbnails generating from the drive.** Starting with none, the app read the drive throughout the scenarios. In about 45 seconds it tried an embedded preview for 15,774 photos, which found 10,006, and finished 681 with full thumbnails, while tiles showed their stored colors and filled in. Grid scenarios held 119.5–120 fps and main thread p99 stayed under 1 ms. The list lost 4–5 frames of 479 in two scenarios, and its worst frame was 10.2 ms.
+
+- Switching to the list loses 1–4 frames while it builds its rows, the first time. Timed together with the first scroll, that frame took 22–35 ms on the real library. It's a one-time cost, so it's left as it is for now.
+- `PHOTON_PERF_SCENARIOS` now always starts from the grid. Quit saves the session, so a run that ended in the list would otherwise open there next time and drive a hidden grid, which looks excellent and means nothing. The seeded figures above were measured after this fix.
+
+**Not verified:** a true 100k library on the drive, because it holds about 30,000 files and nothing may be written to it. Video tile layout with real durations, because `GoPro` isn't browsed with thumbnails until Milestone 6. The slide when columns change, and the new easing to fill the width, watched rather than measured. VoiceOver itself, and real trackpad pinch. Non-US keyboard layouts, and the shortcut table against Photos and Finder.
+
+**Not built:** a compaction pass for packs. The status bar's count also doesn't follow a rubber band until the button comes up.
 
 ### Milestone 1 results
 

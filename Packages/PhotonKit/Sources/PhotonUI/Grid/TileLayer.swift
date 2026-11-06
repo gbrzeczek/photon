@@ -8,6 +8,7 @@ final class TileLayer: CALayer {
     var assetID: Int64 = 0
     var shownTier: ThumbnailTier?
     var isVideo = false
+    var showsSelection = false
     /// The update pass that last saw this tile.
     var stamp = 0
     private var badge: CALayer?

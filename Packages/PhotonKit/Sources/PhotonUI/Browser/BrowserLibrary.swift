@@ -71,7 +71,9 @@ public final class BrowserLibrary {
     }
 
     private func refreshVolumes() async {
-        onlineVolumes = Set(indexer.onlineVolumes().values)
+        let online = Set(indexer.onlineVolumes().values)
+        guard online != onlineVolumes else { return }
+        onlineVolumes = online
         onContentChanged?()
     }
 

@@ -121,6 +121,8 @@ final class BrowserListView: NSView, BrowserContent, NSTableViewDataSource, NSTa
     private var result = BrowseResult.empty
     private var isApplyingSelection = false
     private var needsSelectionSync = false
+    /// The table hasn't seen the latest result, because it's hidden.
+    private var needsReload = false
     private var pendingReveal = false
     private lazy var ticker = FrameTicker { [weak self] _ in self?.tick() ?? false }
 
@@ -239,10 +241,14 @@ final class BrowserListView: NSView, BrowserContent, NSTableViewDataSource, NSTa
 
     func resultDidChange(_ result: BrowseResult, anchor: ViewAnchor?, rows: AspectRows?, prefix: [Double]) {
         self.result = result
+        // A hidden table would still lay out rows and make cells, and the grid would pay for it.
+        guard !isHidden else {
+            needsReload = true
+            return
+        }
         table.reloadData()
         syncSelection()
         updateSortIndicator()
-        guard !isHidden else { return }
         if let anchor {
             let top = table.rect(ofRow: anchor.row).midY - anchor.screenY
             table.scroll(CGPoint(x: 0, y: max(0, top)))
@@ -252,8 +258,19 @@ final class BrowserListView: NSView, BrowserContent, NSTableViewDataSource, NSTa
     }
 
     func selectionDidChange() {
+        guard !isHidden else { return }
         needsSelectionSync = true
         requestTick()
+    }
+
+    /// Catches up with what happened while the grid was showing.
+    func didBecomeVisible() {
+        if needsReload {
+            needsReload = false
+            table.reloadData()
+            updateSortIndicator()
+        }
+        syncSelection()
     }
 
     func revealCurrent() {
@@ -278,6 +295,7 @@ final class BrowserListView: NSView, BrowserContent, NSTableViewDataSource, NSTa
 
     func focus() { window?.makeFirstResponder(table) }
     func tileSizeDidChange() {}
+    func steppedTileSize(from size: CGFloat, larger: Bool) -> CGFloat { size }
     func thumbnailsReady() { requestTick() }
     func layoutModeDidChange() {}
     func focusChanged() {}

@@ -35,6 +35,8 @@ protocol BrowserContent: AnyObject {
     /// Takes keyboard focus.
     func focus()
     func tileSizeDidChange()
+    /// The size one step on from `size`.
+    func steppedTileSize(from size: CGFloat, larger: Bool) -> CGFloat
     func layoutModeDidChange()
     /// Finished thumbnails are waiting in the loader.
     func thumbnailsReady()
@@ -60,6 +62,8 @@ public final class BrowserModel {
     @ObservationIgnored private var grid: (any BrowserContent)?
     @ObservationIgnored private var list: (any BrowserContent)?
     @ObservationIgnored private var showMode: ((BrowserViewMode) -> Void)?
+    @ObservationIgnored private var hasLaidOutContent = false
+    @ObservationIgnored private var pendingInstall: (() -> Void)?
     @ObservationIgnored private var reloadTask: Task<Void, Never>?
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var saveTask: Task<Void, Never>?
@@ -94,13 +98,28 @@ public final class BrowserModel {
         showMode(viewMode)
     }
 
+    /// Grid and list have their real size, so a result can land.
+    func contentDidLayOut() {
+        hasLaidOutContent = true
+        let install = pendingInstall
+        pendingInstall = nil
+        install?()
+    }
+
     // MARK: Opening
+
+    /// Takes on a session and starts its query. Launch does this before building the window, so that the
+    /// window is right the first time, and launch costs the longer of the query and the window, not both.
+    /// Returns false if there's no session.
+    func restore(_ session: BrowseSession?) -> Bool {
+        guard let session else { return false }
+        apply(session)
+        return true
+    }
 
     /// Reopens the folder used last. Returns false if there's no saved session.
     public func restoreLastSession() async -> Bool {
-        guard let session = try? await library.store.latestSession() else { return false }
-        apply(session)
-        return true
+        restore(try? await library.store.latestSession())
     }
 
     public func openFirstFolder() {
@@ -192,6 +211,16 @@ public final class BrowserModel {
         selected: IndexSet, selectionVersion: Int, wantedRow: Int?, keepPosition: Bool
     ) {
         guard generation == self.generation else { return }
+        guard hasLaidOutContent else {
+            // A restored session's query can finish before the window exists, and scrolling to the anchor
+            // needs the view's real size.
+            pendingInstall = { [weak self] in
+                self?.install(
+                    next, generation: generation, prefix: prefix, rows: rows, map: map, selected: selected,
+                    selectionVersion: selectionVersion, wantedRow: wantedRow, keepPosition: keepPosition)
+            }
+            return
+        }
         let interval = Self.signposter.beginInterval("Install")
         defer { Self.signposter.endInterval("Install", interval) }
 
@@ -300,7 +329,7 @@ public final class BrowserModel {
 
     /// A step for Command-Equals and Command-Minus.
     public func stepTileSize(larger: Bool) {
-        setTileSize(CGFloat(tileSize) * (larger ? 1.25 : 0.8))
+        setTileSize(grid?.steppedTileSize(from: CGFloat(tileSize), larger: larger) ?? CGFloat(tileSize))
     }
 
     public func setTileSizeFromSlider(_ size: Double) { setTileSize(CGFloat(size)) }
@@ -410,13 +439,30 @@ public final class BrowserModel {
 
     /// Saves where the user is, anchored to an asset. Called on leaving a folder too.
     public func flushSession() {
-        guard let scope else { return }
-        let anchor = selection.currentAsset
-            ?? active?.captureAnchor().flatMap { $0.row < result.count ? AssetID(rawValue: result.assetIDs[$0.row]) : nil }
-        let session = BrowseSession(
-            scope: scope, sort: sort, viewMode: viewMode.rawValue, tileSize: tileSize, anchor: anchor)
+        guard let session = currentSession() else { return }
         let store = library.store
         Task { try? await store.saveSession(session) }
+    }
+
+    /// Waits for the save, because the process won't outlive this call. The library is on the internal
+    /// disk, so this is a few milliseconds, and the limit is for a stuck writer during indexing.
+    public func saveSessionBeforeQuit() {
+        saveTask?.cancel()
+        guard let session = currentSession() else { return }
+        let store = library.store
+        let done = DispatchSemaphore(value: 0)
+        Task.detached(priority: .userInitiated) {
+            try? await store.saveSession(session)
+            done.signal()
+        }
+        _ = done.wait(timeout: .now() + .milliseconds(500))
+    }
+
+    private func currentSession() -> BrowseSession? {
+        guard let scope else { return nil }
+        let anchor = selection.currentAsset
+            ?? active?.captureAnchor().flatMap { $0.row < result.count ? AssetID(rawValue: result.assetIDs[$0.row]) : nil }
+        return BrowseSession(scope: scope, sort: sort, viewMode: viewMode.rawValue, tileSize: tileSize, anchor: anchor)
     }
 
     // MARK: Files

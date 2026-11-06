@@ -62,6 +62,8 @@ final class PerformanceHarness: NSObject {
             guard let self, self.launchMilliseconds == nil, count > 0 else { return }
             self.launchMilliseconds = (Date().timeIntervalSince1970 - startSeconds) * 1000
             self.model.onResult = nil
+            self.processStart = startSeconds
+            self.view.displayLink(target: self, selector: #selector(self.firstFrame)).add(to: .main, forMode: .common)
             // Lets the first frame reach the screen before anything is measured.
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self.measureOpen() }
         }
@@ -80,6 +82,8 @@ final class PerformanceHarness: NSObject {
     }
 
     private func startScenarios() {
+        // A saved session can open in the list, and these need to start from a grid that's showing.
+        model.setViewMode(.tiles)
         let grid = view.grid
         let list = view.list
         let viewportWidth = grid.bounds.width
@@ -113,11 +117,24 @@ final class PerformanceHarness: NSObject {
                 scenarios.append(Scenario(name: name, frames: 480) { frame in
                     self.pressArrows(frame: frame, perFrame: perFrame)
                 })
+            case "shiftarrows":
+                scenarios.append(Scenario(name: name, frames: 480) { frame in
+                    self.pressArrows(frame: frame, perFrame: 0.25, extending: true)
+                })
+            case "listshiftarrows":
+                scenarios.append(Scenario(name: name, frames: 480) { frame in
+                    if frame == 0 { self.model.setViewMode(.list) }
+                    self.pressArrows(frame: frame, perFrame: 0.25, extending: true)
+                })
             case "listarrows", "listarrowsfast":
                 let perFrame = name == "listarrows" ? 0.25 : 2
                 scenarios.append(Scenario(name: name, frames: 480) { frame in
                     if frame == 0 { self.model.setViewMode(.list) }
                     self.pressArrows(frame: frame, perFrame: perFrame)
+                })
+            case "listswitch":
+                scenarios.append(Scenario(name: name, frames: 60) { frame in
+                    if frame == 0 { self.model.setViewMode(.list) }
                 })
             case "listscroll":
                 scenarios.append(Scenario(name: name, frames: 480) { frame in
@@ -142,12 +159,21 @@ final class PerformanceHarness: NSObject {
 
     private var arrowCredit = 0.0
 
-    private func pressArrows(frame: Int, perFrame: Double) {
+    private func pressArrows(frame: Int, perFrame: Double, extending: Bool = false) {
         arrowCredit += perFrame
         while arrowCredit >= 1 {
             arrowCredit -= 1
-            model.move(frame.isMultiple(of: 240) ? .down : .right, extending: false)
+            model.move(frame.isMultiple(of: 240) ? .down : .right, extending: extending)
         }
+    }
+
+    private var processStart = 0.0
+    private var firstFrameMilliseconds: Double?
+
+    /// The commit with the first tiles has gone out by the frame after they're installed.
+    @objc private func firstFrame(_ link: CADisplayLink) {
+        link.invalidate()
+        firstFrameMilliseconds = (Date().timeIntervalSince1970 - processStart) * 1000
     }
 
     @objc private func fired(_ link: CADisplayLink) {
@@ -208,8 +234,12 @@ final class PerformanceHarness: NSObject {
         let output: [String: Any] = [
             "items": model.itemCount,
             "launchToResultMs": launchMilliseconds ?? -1,
+            "launchToFirstFrameMs": firstFrameMilliseconds ?? -1,
             "openMs": openMilliseconds ?? -1,
             "footprintMB": Double(info.phys_footprint) / 1_048_576,
+            "windowPoints": [view.bounds.width, view.bounds.height],
+            "backingScale": view.window?.backingScaleFactor ?? 0,
+            "maximumFPS": view.window?.screen?.maximumFramesPerSecond ?? 0,
             "scenarios": report,
         ]
         if let data = try? JSONSerialization.data(withJSONObject: output, options: [.prettyPrinted, .sortedKeys]) {
