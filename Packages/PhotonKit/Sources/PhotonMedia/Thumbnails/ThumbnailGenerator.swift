@@ -89,7 +89,6 @@ public final class ThumbnailGenerator: Sendable {
         var report = BackgroundReport()
         let clock = ContinuousClock()
         let start = clock.now
-        defer { report.seconds = (clock.now - start) / .seconds(1) }
         do {
             for (state, stage) in [(ThumbnailState.none, Stage.preview), (.preview, .full)] {
                 var cursor: AssetID?
@@ -128,6 +127,7 @@ public final class ThumbnailGenerator: Sendable {
         } catch VolumeIOError.volumeUnavailable {
             report.outcome = .volumeOffline
         }
+        report.seconds = (clock.now - start) / .seconds(1)
         return report
     }
 

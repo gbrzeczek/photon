@@ -36,9 +36,13 @@ final class GridDocumentView: NSView {
 
 /// Sits over the scroll view's clip view, fixed to the viewport, and holds the tile layers.
 final class GridHostView: NSView {
+    var accessibleTiles: (@MainActor () -> [NSAccessibilityElement])?
+
     override var isFlipped: Bool { true }
     override var wantsUpdateLayer: Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    /// Built when asked, because nothing should pay for it on every key press.
+    override func accessibilityChildren() -> [Any]? { accessibleTiles?() }
 }
 
 /// The photo grid: recycled `CALayer` tiles, the backend chosen in Spike 1.
@@ -255,7 +259,10 @@ final class TileGridView: NSView, BrowserContent {
         lastScrollTop = top
         lastScrollTime = now
         updateTiles(force: false)
-        if !isZooming, tileLayout.canSettle(viewportTop: top) { settlePhase() }
+        if !isZooming, tileLayout.canSettle(viewportTop: top) { settleRows() }
+        if !isScrollingFast, !isZooming, abs(top - lastAheadTop) > viewportHeight / 2 {
+            requestAhead(wanted: wantedTier)
+        }
         startTicking()
     }
 
@@ -438,7 +445,11 @@ final class TileGridView: NSView, BrowserContent {
 
     private func setSelected(_ tile: TileLayer, _ selected: Bool) {
         tile.borderWidth = selected ? 3 : 0
-        if selected { tile.borderColor = NSColor.selectedContentBackgroundColor.cgColor }
+        if selected {
+            effectiveAppearance.performAsCurrentDrawingAppearance {
+                tile.borderColor = NSColor.selectedContentBackgroundColor.cgColor
+            }
+        }
     }
 
     private func recolor() {
@@ -643,31 +654,36 @@ final class TileGridView: NSView, BrowserContent {
     }
 
     /// The full pass, off the main thread, breaking rows at the same place so that nothing visibly moves.
-    private func startFullPass(anchor row: Int) {
+    private func startFullPass(anchor row: Int, fromTop: Bool = false) {
         fullPassGeneration += 1
         let generation = fullPassGeneration
         let (aspects, width, tile, spacing) = (tileLayout.aspects, tileLayout.width, tileLayout.tile, tileLayout.spacing)
-        let start = tileLayout.rowStart(containing: row)
+        let start = fromTop ? 0 : tileLayout.rowStart(containing: row)
         Task.detached(priority: .userInitiated) { [weak self] in
             let interval = Self.signposter.beginInterval("Full pass")
             let rows = AspectRows.compute(aspects: aspects, width: width, target: tile, spacing: spacing, anchorStart: start)
             Self.signposter.endInterval("Full pass", interval)
-            await self?.installFullPass(rows, generation: generation, row: row)
+            await self?.installFullPass(rows, generation: generation, row: row, anchorStart: start)
         }
     }
 
-    private func installFullPass(_ rows: AspectRows, generation: Int, row: Int) {
+    private func installFullPass(_ rows: AspectRows, generation: Int, row: Int, anchorStart: Int) {
         guard generation == fullPassGeneration, !isZooming else { return }
         let top = viewportTop
         let screenY = tileLayout.frame(of: row).midY - top
-        tileLayout.install(rows)
+        tileLayout.install(rows, anchorStart: anchorStart)
         zoomAnchor = nil
         applyContentHeight()
         scrollAnchorIntoPlace(ViewAnchor(row: row, screenY: screenY))
         updateTiles(force: true)
     }
 
-    private func settlePhase() {
+    /// Puts back the rows a zoom shifted, now that the top of the library is showing.
+    private func settleRows() {
+        guard tileLayout.mode == .square else {
+            if let row = captureAnchor()?.row { startFullPass(anchor: row, fromTop: true) }
+            return
+        }
         let old = screenPositions()
         let anchor = captureAnchor()
         tileLayout.settle()
@@ -752,6 +768,7 @@ final class TileGridView: NSView, BrowserContent {
 
     var layoutTile: CGFloat { tileLayout.tile }
     var visibleTileCount: Int { tiles.count }
+    var visibleThumbnailCount: Int { tiles.values.filter { $0.shownTier != nil }.count }
     var scrollTopForMeasuring: CGFloat { viewportTop }
 }
 
@@ -763,6 +780,7 @@ extension TileGridView {
         host.setAccessibilityRole(.list)
         host.setAccessibilityLabel("Photos")
         host.setAccessibilityIdentifier("photon.tiles")
+        host.accessibleTiles = { [weak self] in self?.accessibleTiles() ?? [] }
     }
 
     /// Reads the position for VoiceOver, and gives UI tests something to check.
@@ -770,7 +788,6 @@ extension TileGridView {
         let selected = model.selection.count
         let position = model.selection.currentRow.map { "Item \($0 + 1) of \(result.count)" } ?? "\(result.count) items"
         document.setAccessibilityValue("\(position), \(selected) selected")
-        host.setAccessibilityChildren(accessibleTiles())
     }
 
     /// One element per visible tile: 20 lines in Spike 1, and under a millisecond to build.

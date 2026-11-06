@@ -22,6 +22,9 @@ public final class DecodedThumbnail: @unchecked Sendable {
 
     var byteCount: Int { surface.allocationSize }
 
+    /// For tests in other modules, which render thumbnails to check how they reach the screen.
+    public static func decodeForTesting(_ data: Data) -> DecodedThumbnail? { decode(data, tier: .small) }
+
     /// Decodes JPEG bytes in full, here, so that the main thread only assigns the result.
     /// Pixels are Display P3, so that wide-gamut photos keep their color on a P3 screen.
     static func decode(_ data: Data, tier: ThumbnailTier) -> DecodedThumbnail? {
@@ -30,11 +33,12 @@ public final class DecodedThumbnail: @unchecked Sendable {
             let space = CGColorSpace(name: CGColorSpace.displayP3)
         else { return nil }
         let (width, height) = (image.width, image.height)
-        let properties: [IOSurfacePropertyKey: Any] = [
-            .width: width, .height: height, .bytesPerElement: 4,
-            .pixelFormat: 0x4247_5241 as UInt32,  // 'BGRA'
-        ]
-        guard let surface = IOSurface(properties: properties) else { return nil }
+        guard
+            let surface = IOSurface(properties: [
+                .width: width, .height: height, .bytesPerElement: 4,
+                .pixelFormat: 0x4247_5241 as UInt32,  // 'BGRA'
+            ])
+        else { return nil }
         surface.setAttachment(CGColorSpace.displayP3 as String, forKey: "IOSurfaceColorSpace")
         surface.lock(options: [], seed: nil)
         defer { surface.unlock(options: [], seed: nil) }

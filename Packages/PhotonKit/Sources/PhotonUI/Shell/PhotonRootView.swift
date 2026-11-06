@@ -46,8 +46,10 @@ public struct PhotonRootView: View {
             let model = BrowserModel(library: library)
             model.setLayoutMode(launch.layoutMode)
             state = .ready(library, model)
+            // The last session comes first: it's what launch is measured by, and it needs no volumes.
+            let restored = await model.restoreLastSession()
             await library.start()
-            await model.restore()
+            if !restored { model.openFirstFolder() }
         } catch {
             state = .failed(error.localizedDescription)
         }

@@ -56,9 +56,13 @@ final class BrowserTableView: NSTableView {
 }
 
 /// A row in the list: a small thumbnail, and a label filling the rest.
+private final class ThumbnailView: NSView {
+    override var isFlipped: Bool { true }
+}
+
 private final class ListCell: NSTableCellView {
     let label = NSTextField(labelWithString: "")
-    let thumbnail = NSView()
+    let thumbnail = ThumbnailView()
     private(set) var assetID: Int64 = 0
     private(set) var shownTier: ThumbnailTier?
 
@@ -192,7 +196,7 @@ final class BrowserListView: NSView, BrowserContent, NSTableViewDataSource, NSTa
         guard isShowing else { return }
         for (asset, thumbnail) in loader.drain(limit: 32) {
             let rows = table.rows(in: table.visibleRect)
-            for row in rows.lowerBound..<rows.upperBound where result.assetIDs[row] == asset.rawValue {
+            for row in rows.lowerBound..<rows.upperBound where row < result.count && result.assetIDs[row] == asset.rawValue {
                 if let cell = table.view(atColumn: 0, row: row, makeIfNecessary: false) as? ListCell {
                     cell.show(asset: asset.rawValue, thumbnail: thumbnail, placeholder: nil)
                 }

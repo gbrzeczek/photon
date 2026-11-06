@@ -297,7 +297,7 @@ struct BrowsingTests {
         view.grid.layoutSubtreeIfNeeded()
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             next.onResult = { _ in continuation.resume() }
-            Task { await next.restore() }
+            Task { _ = await next.restoreLastSession() }
         }
         #expect(next.selection.currentAsset == asset)
         #expect(next.tileSize == 200)

@@ -130,6 +130,7 @@ struct TileLayout {
     // Aspect
     private var full = AspectRows()
     private var fullIsValid = false
+    private var fullAnchorStart = 0
     private var local = AspectRows()
     /// A running count of changes to how rows break, for the column-change transition.
     private(set) var structureVersion = 0
@@ -242,12 +243,13 @@ struct TileLayout {
         }
     }
 
-    /// Whether the blank cells from a zoom could be cleared, which only makes sense where they show.
+    /// Whether a zoom's shifted rows could be put back, which only matters where they show: blank
+    /// cells or a short row at the very top.
     func canSettle(viewportTop: CGFloat) -> Bool {
-        phase != 0 && viewportTop < pitch
+        viewportTop < pitch && (mode == .square ? phase != 0 : fullIsValid && fullAnchorStart != 0)
     }
 
-    /// Clears the blank cells from a zoom.
+    /// Clears the blank cells from a zoom. Aspect-ratio rows need a full pass from the top instead.
     mutating func settle() {
         guard phase != 0 else { return }
         phase = 0
@@ -261,8 +263,10 @@ struct TileLayout {
     }
 
     /// Installs the full pass, which replaces the local rows.
-    mutating func install(_ rows: AspectRows) {
+    /// - Parameter anchorStart: The row it broke around.
+    mutating func install(_ rows: AspectRows, anchorStart: Int = 0) {
         full = rows
+        fullAnchorStart = anchorStart
         fullIsValid = true
         local = AspectRows()
     }

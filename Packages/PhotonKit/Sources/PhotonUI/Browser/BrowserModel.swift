@@ -96,13 +96,15 @@ public final class BrowserModel {
 
     // MARK: Opening
 
-    /// Reopens the folder used last, or the first one.
-    public func restore() async {
-        if let session = try? await library.store.latestSession() {
-            apply(session)
-        } else if let first = library.folders.first {
-            open(BrowseScope(volume: first.volume, path: first.path))
-        }
+    /// Reopens the folder used last. Returns false if there's no saved session.
+    public func restoreLastSession() async -> Bool {
+        guard let session = try? await library.store.latestSession() else { return false }
+        apply(session)
+        return true
+    }
+
+    public func openFirstFolder() {
+        if let first = library.folders.first { open(BrowseScope(volume: first.volume, path: first.path)) }
     }
 
     public func open(_ scope: BrowseScope) {
@@ -235,7 +237,12 @@ public final class BrowserModel {
     }
 
     private func contentChanged() {
-        guard scope != nil, pendingContentReload == nil else { return }
+        guard scope != nil else {
+            // The first folder just arrived, so there's something to show.
+            openFirstFolder()
+            return
+        }
+        guard pendingContentReload == nil else { return }
         let wait = Self.contentReloadInterval - (ContinuousClock.now - lastContentReload)
         pendingContentReload = Task {
             if wait > .zero { try? await Task.sleep(for: wait) }
