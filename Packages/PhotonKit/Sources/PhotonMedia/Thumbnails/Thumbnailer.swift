@@ -23,6 +23,13 @@ public struct EncodedThumbnail: Sendable {
     public var data: Data
     public var width: Int
     public var height: Int
+
+    public init(tier: ThumbnailTier, data: Data, width: Int, height: Int) {
+        self.tier = tier
+        self.data = data
+        self.width = width
+        self.height = height
+    }
 }
 
 public struct ThumbnailSet: Sendable {

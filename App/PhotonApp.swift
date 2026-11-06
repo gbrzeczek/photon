@@ -5,7 +5,8 @@ import SwiftUI
 struct PhotonApp: App {
     var body: some Scene {
         WindowGroup {
-            IndexStatusView()
+            PhotonRootView()
         }
+        .commands { PhotonCommands() }
     }
 }

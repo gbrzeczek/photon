@@ -14,7 +14,11 @@ let usage = """
       photon-index status [--database <file>]
       photon-index mount-info <folder>
       photon-index generate <folder> [--count <n>] [--average-bytes <n>] [--seed <n>]
+      photon-index thumbnails <folder> [--database <file>] [--json <file>]
+      photon-index seed --database <file> [--count <n>] [--seed <n>]
 
+    thumbnails makes every thumbnail for a folder that has been scanned, reading it the way scan does.
+    seed writes a library with no real files, for measuring the grid. Its volume is always offline.
     scan refuses an external volume unless it's mounted read-only.
     generate only writes to the internal disk or a disk image.
     """
@@ -123,6 +127,49 @@ func runGenerate(path: String) throws {
             + "\(manifest.duplicates) duplicates, \(manifest.bytes) bytes")
 }
 
+func runThumbnails(path: String) async throws {
+    let mount = try MountedVolume.containing(path: path).volume
+    if let reason = MountPolicy.refusalReason(for: mount) { fail("Refused: \(reason)") }
+    print("Volume: \(mount.filesystem), \(mount.location.rawValue), read-only: \(mount.isReadOnly)")
+    let store = try openStore()
+    let indexer = LibraryIndexer(store: store, extractor: MediaMetadataReader())
+    let monitor = VolumeEventMonitor(
+        center: NSWorkspace.shared.notificationCenter,
+        willUnmount: { indexer.volumeWillUnmount(mountPoint: $0) },
+        didUnmount: { indexer.volumeDidUnmount(mountPoint: $0) })
+    let volume = try await indexer.connect(mount: mount)
+    let packs = ThumbnailPackStore(store: store)
+    let generator = ThumbnailGenerator(store: store, packs: packs, scheduler: { indexer.scheduler(for: $0) })
+
+    let run = Task { try await generator.runBackground(volume: volume) }
+    signal(SIGINT, SIG_IGN)
+    let interrupt = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+    interrupt.setEventHandler { run.cancel() }
+    interrupt.resume()
+    let report = try await run.value
+    withExtendedLifetime(monitor) {}
+    interrupt.cancel()
+
+    let pack = try await store.thumbnailPacks()
+    let bytes = { (tier: ThumbnailTier) in pack.filter { $0.tier == tier }.reduce(0) { $0 + $1.byteCount } }
+    let lines: [(String, String)] = [
+        ("outcome", report.outcome.rawValue),
+        ("previews", String(report.previews)),
+        ("full", String(report.full)),
+        ("failed", String(report.failed)),
+        ("seconds", format(report.seconds)),
+        ("small bytes", String(bytes(.small))),
+        ("large bytes", String(bytes(.large))),
+        ("preview bytes", String(bytes(.preview))),
+    ]
+    for (label, value) in lines { print("\(label): \(value)") }
+    if let json = option("--json") {
+        let object = Dictionary(lines, uniquingKeysWith: { first, _ in first })
+        try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+            .write(to: URL(fileURLWithPath: json))
+    }
+}
+
 let arguments = CommandLine.arguments
 guard arguments.count >= 2 else { fail(usage) }
 do {
@@ -131,6 +178,8 @@ do {
     case ("status", _): try await runStatus()
     case ("mount-info", let path?): try runMountInfo(path: path)
     case ("generate", let path?): try runGenerate(path: path)
+    case ("thumbnails", let path?): try await runThumbnails(path: path)
+    case ("seed", _): try await runSeed()
     default: fail(usage)
     }
 } catch {
