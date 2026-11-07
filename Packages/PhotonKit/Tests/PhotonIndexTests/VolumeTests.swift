@@ -200,6 +200,13 @@ struct MountPolicyTests {
         #expect(MountPolicy.refusalReason(for: fakeMount("/Volumes/X", location: .diskImage, isReadOnly: false)) == nil)
     }
 
+    @Test func nonsenseFromAVolumeOnItsWayOutIsNotACrash() {
+        #expect(MountedVolume.capacity(blocks: 1_000, blockSize: 4096) == 4_096_000)
+        #expect(MountedVolume.capacity(blocks: .max, blockSize: 1) == 0)
+        #expect(MountedVolume.capacity(blocks: .max, blockSize: 4096) == 0)
+        #expect(MountedVolume.capacity(blocks: 0, blockSize: 0) == 0)
+    }
+
     @Test func locationComesFromDiskArbitration() {
         #expect(MountedVolume.location(model: "Disk Image", isInternal: true) == .diskImage)
         #expect(MountedVolume.location(model: "Disk Image   ", isInternal: nil) == .diskImage)

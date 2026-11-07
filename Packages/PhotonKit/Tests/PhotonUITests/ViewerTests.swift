@@ -281,6 +281,7 @@ struct ViewerTests {
     @Test("A scroll eases to its zoom, notches add up, and anything else takes over")
     func scrollZoomEases() async throws {
         try await withBrowser { browser async throws in
+            browser.viewer.reducesMotionForTesting = false
             browser.pressSpace()
             land(browser)
             let notch = try #require(browser.scroll(lines: 3))
@@ -307,6 +308,18 @@ struct ViewerTests {
             browser.viewer.scrollWheel(with: notch)
             browser.pressEscape()
             #expect(!browser.viewer.isEasingZoomForTesting)
+        }
+    }
+
+    @Test("Reduce Motion goes straight to a scroll's zoom")
+    func scrollZoomReducedMotion() async throws {
+        try await withBrowser { browser async throws in
+            browser.viewer.reducesMotionForTesting = true
+            browser.pressSpace()
+            land(browser)
+            browser.viewer.scrollWheel(with: try #require(browser.scroll(lines: 3)))
+            #expect(!browser.viewer.isEasingZoomForTesting)
+            #expect(browser.viewer.zoomForTesting > 1.2)
         }
     }
 

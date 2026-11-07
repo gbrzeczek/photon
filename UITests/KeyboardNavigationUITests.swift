@@ -73,6 +73,18 @@ final class KeyboardNavigationUITests: XCTestCase {
         XCTAssertTrue(position.hasSuffix(" 0 selected"), position)
     }
 
+    @MainActor func testCommandScrollChangesTheTileSize() {
+        let slider = app.sliders["Tile size"]
+        let before = slider.value as? String ?? ""
+        XCUIElement.perform(withKeyModifiers: .command) {
+            tiles.scroll(byDeltaX: 0, deltaY: 20)
+        }
+        let changed = NSPredicate(format: "value != %@", before)
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: changed, object: slider)], timeout: 3),
+            .completed)
+    }
+
     @MainActor func testCommandDraggingSelectsARectangle() {
         app.typeKey("a", modifierFlags: [.command, .shift])
         let start = tiles.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.2))

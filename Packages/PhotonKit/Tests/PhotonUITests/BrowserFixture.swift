@@ -127,9 +127,13 @@ final class BrowserFixture {
     }
 
     /// A mouse wheel, in lines.
-    func scroll(lines: Int32) -> NSEvent? {
-        CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 1, wheel1: lines, wheel2: 0, wheel3: 0)
-            .flatMap { NSEvent(cgEvent: $0) }
+    func scroll(lines: Int32, modifiers: NSEvent.ModifierFlags = []) -> NSEvent? {
+        guard
+            let event = CGEvent(
+                scrollWheelEvent2Source: nil, units: .line, wheelCount: 1, wheel1: lines, wheel2: 0, wheel3: 0)
+        else { return nil }
+        event.flags = CGEventFlags(rawValue: UInt64(modifiers.rawValue))
+        return NSEvent(cgEvent: event)
     }
 
     /// A trackpad's scroll, in points, in the middle of a gesture.

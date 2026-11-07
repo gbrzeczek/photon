@@ -100,6 +100,62 @@ struct RubberBandTests {
         }
     }
 
+    @Test("Command or Option with a wheel changes the tile size, and a plain wheel only scrolls")
+    func scrollZoom() async throws {
+        try await withBrowser { browser async throws in
+            browser.grid.reducesMotionForTesting = false
+            let start = browser.grid.layoutTile
+            #expect(!browser.grid.handleScrollZoom(try #require(browser.scroll(lines: 3))))
+            #expect(!browser.grid.isEasingZoomForTesting)
+
+            #expect(browser.grid.handleScrollZoom(try #require(browser.scroll(lines: 3, modifiers: .command))))
+            #expect(browser.grid.isEasingZoomForTesting)
+            #expect(browser.grid.layoutTile == start)
+            browser.grid.finishScrollZoomForTesting()
+            let larger = browser.grid.layoutTile
+            #expect(larger > start)
+            #expect(browser.model.tileSize == Double(larger))
+
+            #expect(browser.grid.handleScrollZoom(try #require(browser.scroll(lines: -6, modifiers: .option))))
+            browser.grid.finishScrollZoomForTesting()
+            #expect(browser.grid.layoutTile < larger)
+        }
+    }
+
+    @Test("Scroll notches add up, stop at the limit, and a pinch takes over")
+    func scrollZoomLimits() async throws {
+        try await withBrowser { browser async throws in
+            browser.grid.reducesMotionForTesting = false
+            let notch = try #require(browser.scroll(lines: -10, modifiers: .command))
+            for _ in 0..<40 { _ = browser.grid.handleScrollZoom(notch) }
+            browser.grid.finishScrollZoomForTesting()
+            #expect(browser.grid.layoutTile == TileMetrics.minimumTile)
+
+            _ = browser.grid.handleScrollZoom(try #require(browser.scroll(lines: 3, modifiers: .command)))
+            browser.grid.handleMagnify(try #require(browser.gesture(magnification: 0.1, at: .zero)))
+            #expect(!browser.grid.isEasingZoomForTesting)
+        }
+    }
+
+    @Test("Reduce Motion goes straight to a scroll's tile size")
+    func scrollZoomReducedMotion() async throws {
+        try await withBrowser { browser async throws in
+            browser.grid.reducesMotionForTesting = true
+            let start = browser.grid.layoutTile
+            _ = browser.grid.handleScrollZoom(try #require(browser.scroll(lines: 3, modifiers: .command)))
+            #expect(!browser.grid.isEasingZoomForTesting)
+            #expect(browser.grid.layoutTile > start)
+        }
+    }
+
+    @Test("A scroll on an empty folder does nothing")
+    func scrollZoomEmpty() async throws {
+        try await withBrowser(count: 0) { browser async throws in
+            #expect(browser.grid.handleScrollZoom(try #require(browser.scroll(lines: 3, modifiers: .command))))
+            #expect(!browser.grid.isEasingZoomForTesting)
+        }
+    }
+
     @Test("Dragging from a selected tile leaves the selection alone")
     func selectedTileIsKeptForFileDrags() async throws {
         try await withBrowser { browser in

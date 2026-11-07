@@ -165,7 +165,7 @@ First-time indexing takes about 30 minutes per 100k photos at full speed, and ab
 
 - Grid and list share one data source and selection model.
 - A query result is a compact array of row IDs, and rows load in pages as they're needed.
-- Square tiles always fill the width at rest, as in Photos on iOS, with no side margins. The size chosen only sets the column count, and the tile is whatever fits that many columns. A pinch follows the fingers exactly, with margins while it lasts, and eases to fill the width when it ends. The slider and Cmd-plus or Cmd-minus ease from one column count to the next, and a shortcut always changes the count unless the size limit stops it. Window resizing stays filled throughout. Reduce Motion turns the easing off. Aspect-ratio rows already fill the width, and their size stays continuous.
+- Square tiles always fill the width at rest, as in Photos on iOS, with no side margins. The size chosen only sets the column count, and the tile is whatever fits that many columns. A pinch follows the fingers exactly, with margins while it lasts, and eases to fill the width when it ends. A scroll with Command or Option held does the same around the pointer, easing toward where its notches add up to. A plain scroll only scrolls, so a mouse wheel needs the key here, unlike in the viewer. The slider and Cmd-plus or Cmd-minus ease from one column count to the next, and a shortcut always changes the count unless the size limit stops it. Window resizing stays filled throughout. Reduce Motion turns the easing off. Aspect-ratio rows already fill the width, and their size stays continuous.
 - The tile under the cursor stays anchored vertically, to within half a device pixel, because the clip view snaps to pixels.
 - **Sideways jumps:** when the column count changes, rows break so that the anchor stays in its column, which adds blank cells before the first item (`phase`). Each tile then slides from its old position with an additive animation, so the frames of a continuing pinch carry on underneath. Reduce Motion turns the slide off. The blank cells clear, with the same slide, once the top of the library is on screen.
 - Layouts are square and aspect-ratio. During a zoom, aspect-ratio rows are built outward from the anchor, only as far as they're looked at, and heights come from an estimate. The full pass runs off the main thread afterward and breaks rows at the same place, so nothing visibly moves when it lands.
@@ -266,7 +266,7 @@ Keyboard navigation is built alongside the grid, list and viewer, not added duri
 
 Space closes a photo in the viewer, so it works as a quick look toggle. For videos it plays and pauses, and Escape closes. Until Milestone 6, Space closes a video too.
 
-The viewer also takes a pinch, a mouse wheel or a scroll with Command or Option held to zoom, the toolbar's zoom buttons, a double click or two-finger double tap to toggle actual size, dragging or a trackpad scroll to pan when zoomed in, and a two-finger swipe to the next photo at fit. Double-clicking a tile or row opens it. These need the mouse or trackpad, and everything they do has a key.
+The viewer also takes a pinch, a mouse wheel or a scroll with Command or Option held to zoom, the toolbar's zoom buttons, a double click or two-finger double tap to toggle actual size, dragging or a trackpad scroll to pan when zoomed in, and a two-finger swipe to the next photo at fit. Double-clicking a tile or row opens it. In the grid, a scroll with Command or Option held changes the tile size. These need the mouse or trackpad, and everything they do has a key.
 
 ### Video
 
@@ -511,12 +511,14 @@ Tested on a real screen:
 - Dragging from the grid into Finder: 24 files, byte for byte, which covers the files past the 16 dragging items. `FileTransferUITests` needs a small library of real files, so it's set up by hand, and its header says how.
 - Light and dark, by screenshot on the T7's real photos: fit, zoomed in, opened from the list, and a video's placeholder. The photo stays sharp at high zoom.
 
-Tested with no display: 359 Swift Testing tests, including real key events in a window that isn't shown, progressive loading on a read-only exFAT image, and pulling that image while viewing. A pinch and a scroll are called on the viewer directly.
+Tested with no display: 365 Swift Testing tests, including real key events in a window that isn't shown, progressive loading on a read-only exFAT image, and pulling that image while viewing. A pinch and a scroll are called on the viewer directly.
 
 **Accepted:**
 
 - The list's worst frame of 12.1 ms on the seeded 100k library, measured at Milestone 2 against the 8 ms budget. The user accepted this by merging Milestone 2, and it's recorded here because the budget rules ask for an explicit decision. It happens during list scrolling, and p99 is about 1 ms.
 - Image data is limited to 4096 px, so a paste of pixels from a larger photo is smaller than the original. This limit was chosen without measuring encoding times, and may be too cautious. Finder and anything taking the file get the original.
+
+A disk image detached while another test listed the mounts crashed the process once: a volume on its way out reported a block count too large for `Int64`. Capacity now treats an overflow as unknown, because a real drive being pulled could do the same.
 
 **Not verified:** how the transitions look frame by frame, because window capture lags them. They're measured, and the flight has been watched only by the user, if at all. Reduce Motion's fades. Pasting into Messages and Figma themselves, as opposed to another process reading the same pasteboard. Dragging from the list or the viewer, which share the grid's code but only their preparation is tested. Real HDR photos from a camera or phone, PQ and HLG files, and HDR on an external display. RAW files. Panoramas past the size limits on a real screen. VoiceOver itself, a real trackpad swipe, and non-US keyboard layouts. How the eased scroll zoom feels on a real mouse wheel, and the direction a real wheel zooms. A real trackpad pinch works, as checked by the user. Pulling a real drive while viewing, which belongs to Milestone 4's physical check. The drive pulled during a paste.
 

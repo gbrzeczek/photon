@@ -83,7 +83,7 @@ public struct MountedVolume: Hashable, Sendable {
         mountPoint = Self.string(info.f_mntonname)
         filesystem = Self.string(info.f_fstypename)
         isReadOnly = info.f_flags & UInt32(MNT_RDONLY) != 0
-        capacity = Int64(info.f_blocks) &* Int64(info.f_bsize)
+        capacity = Self.capacity(blocks: info.f_blocks, blockSize: info.f_bsize)
         filesystemID = [info.f_fsid.val.0, info.f_fsid.val.1]
 
         let device = Self.string(info.f_mntfromname)
@@ -104,6 +104,12 @@ public struct MountedVolume: Hashable, Sendable {
         location = Self.location(
             model: description[kDADiskDescriptionDeviceModelKey as String] as? String,
             isInternal: description[kDADiskDescriptionDeviceInternalKey as String] as? Bool)
+    }
+
+    /// A volume on its way out can report nonsense here, so an overflow means nothing is known, not a crash.
+    static func capacity(blocks: UInt64, blockSize: UInt32) -> Int64 {
+        let (bytes, overflow) = blocks.multipliedReportingOverflow(by: UInt64(blockSize))
+        return overflow ? 0 : Int64(exactly: bytes) ?? 0
     }
 
     static func location(model: String?, isInternal: Bool?) -> DriveLocation {

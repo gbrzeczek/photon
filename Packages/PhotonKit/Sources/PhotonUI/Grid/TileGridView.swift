@@ -37,6 +37,9 @@ final class GridDocumentView: NSView, NSDraggingSource {
     override func mouseDragged(with event: NSEvent) { grid?.handleMouseDragged(event) }
     override func mouseUp(with event: NSEvent) { grid?.handleMouseUp(event) }
     override func magnify(with event: NSEvent) { grid?.handleMagnify(event) }
+    override func scrollWheel(with event: NSEvent) {
+        if grid?.handleScrollZoom(event) != true { super.scrollWheel(with: event) }
+    }
     override func menu(for event: NSEvent) -> NSMenu? { grid?.contextMenu(for: event) }
     override func selectAll(_ sender: Any?) { grid?.model.selectAll() }
 }
@@ -92,6 +95,8 @@ final class TileGridView: NSView, BrowserContent {
     private var isPinching = false
     /// Easing to a size that fills the width.
     private var tileAnimation: (from: CGFloat, to: CGFloat, start: CFTimeInterval)?
+    /// Where a scroll is zooming to. Each frame moves part of the way, and a pause ends it like a pinch.
+    private var scrollZoom: (target: CGFloat, lastFrame: CFTimeInterval?)?
     private var lastScrollTop: CGFloat = 0
     private var lastScrollTime = ContinuousClock.now
     private var isScrollingFast = false
@@ -182,6 +187,7 @@ final class TileGridView: NSView, BrowserContent {
         model.layoutWidth = width
         if width != tileLayout.width {
             tileAnimation = nil
+            scrollZoom = nil
             let anchor = captureAnchor()
             if let anchor, tileLayout.mode == .aspect, tileLayout.count > 0 {
                 let frame = tileLayout.frame(of: anchor.row)
@@ -232,11 +238,12 @@ final class TileGridView: NSView, BrowserContent {
         }
 
         // A stalled frame mustn't end the zoom under a running animation, which needs its anchor.
-        if let end = zoomEndsAt, ContinuousClock.now >= end, !isPinching, tileAnimation == nil {
+        if let end = zoomEndsAt, ContinuousClock.now >= end, !isPinching, tileAnimation == nil, scrollZoom == nil {
             zoomEndsAt = nil
             finishZoom()
         }
         stepTileAnimation()
+        stepScrollZoom(at: CACurrentMediaTime())
         // Key repeats land here, so that several in one frame do one update.
         if needsTileUpdate {
             needsTileUpdate = false
@@ -258,7 +265,8 @@ final class TileGridView: NSView, BrowserContent {
         }
         drainThumbnails()
 
-        let busy = zoomEndsAt != nil || tileAnimation != nil || isScrollingFast || loader.hasFinishedThumbnails
+        let busy = zoomEndsAt != nil || tileAnimation != nil || scrollZoom != nil || isScrollingFast
+            || loader.hasFinishedThumbnails
             || needsTileUpdate || band != nil
         idleFrames = busy ? 0 : idleFrames + 1
         return idleFrames < 30
@@ -562,6 +570,7 @@ final class TileGridView: NSView, BrowserContent {
     func resultDidChange(_ result: BrowseResult, anchor: ViewAnchor?, rows: AspectRows?, prefix: [Double]) {
         self.result = result
         tileAnimation = nil
+        scrollZoom = nil
         fullPassGeneration += 1
         // Tile objects stay, but they may now show other rows.
         recycleAll()
@@ -659,6 +668,7 @@ final class TileGridView: NSView, BrowserContent {
     func thumbnailsReady() { startTicking() }
 
     func tileSizeDidChange() {
+        scrollZoom = nil
         guard result.count > 0 else {
             tileLayout.resize(width: tileLayout.width, tile: CGFloat(model.tileSize))
             return
@@ -681,6 +691,7 @@ final class TileGridView: NSView, BrowserContent {
 
     func layoutModeDidChange() {
         tileAnimation = nil
+        scrollZoom = nil
         let anchor = captureAnchor()
         tileLayout.setMode(model.layoutMode)
         tileLayout.resize(width: tileLayout.width, tile: CGFloat(model.tileSize))
@@ -849,6 +860,7 @@ final class TileGridView: NSView, BrowserContent {
     }
 
     func handleMouseDown(_ event: NSEvent) {
+        scrollZoom = nil
         window?.makeFirstResponder(document)
         cancelBand()
         selectOnRelease = nil
@@ -1011,6 +1023,7 @@ final class TileGridView: NSView, BrowserContent {
 
     func handleMagnify(_ event: NSEvent) {
         tileAnimation = nil
+        scrollZoom = nil
         if event.phase == .began || zoomAnchor == nil {
             beginZoom(at: document.convert(event.locationInWindow, from: nil))
         }
@@ -1022,6 +1035,50 @@ final class TileGridView: NSView, BrowserContent {
         zoom(to: CGFloat(model.tileSize))
     }
 
+    /// Command or Option with a scroll changes the tile size around the pointer. A plain scroll has to
+    /// keep scrolling, so a mouse wheel needs the key here, unlike in the viewer.
+    func handleScrollZoom(_ event: NSEvent) -> Bool {
+        guard !event.modifierFlags.isDisjoint(with: [.command, .option]) else { return false }
+        guard event.momentumPhase == [] else { return true }
+        let delta = event.isDirectionInvertedFromDevice ? -event.scrollingDeltaY : event.scrollingDeltaY
+        zoomByScroll(
+            factor: ViewerGeometry.scrollZoomFactor(delta: delta, isPrecise: event.hasPreciseScrollingDeltas),
+            at: document.convert(event.locationInWindow, from: nil))
+        return true
+    }
+
+    /// Notches add to where it's heading, not to where it's got to.
+    private func zoomByScroll(factor: CGFloat, at point: CGPoint) {
+        guard result.count > 0 else { return }
+        tileAnimation = nil
+        if scrollZoom == nil { beginZoom(at: point) }
+        // A filled tile can be over the limit, and a scroll shouldn't start by jumping down to it.
+        let largest = max(TileMetrics.maximumTile, tileLayout.tile)
+        let target = min(max((scrollZoom?.target ?? tileLayout.tile) * factor, TileMetrics.minimumTile), largest)
+        guard !reducesMotion else {
+            model.setTileSizeFromGesture(target)
+            zoom(to: target)
+            return
+        }
+        scrollZoom = (target, scrollZoom?.lastFrame)
+        isZooming = true
+        startTicking()
+    }
+
+    private var reducesMotion: Bool {
+        reducesMotionForTesting ?? NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    }
+
+    private func stepScrollZoom(at time: CFTimeInterval) {
+        guard let scroll = scrollZoom else { return }
+        let elapsed = scroll.lastFrame.map { time - $0 } ?? 1.0 / 120
+        let next = ViewerGeometry.easedZoom(
+            from: tileLayout.tile, to: scroll.target, elapsed: min(elapsed, ViewerGeometry.longestEaseFrame))
+        scrollZoom = next == scroll.target ? nil : (scroll.target, time)
+        model.setTileSizeFromGesture(next)
+        zoom(to: next)
+    }
+
     func contextMenu(for event: NSEvent) -> NSMenu? {
         let point = document.convert(event.locationInWindow, from: nil)
         guard let row = tileLayout.index(at: point) else { return nil }
@@ -1031,13 +1088,30 @@ final class TileGridView: NSView, BrowserContent {
 
     // MARK: Measuring
 
+    /// A wheel notch, by the same path a real one takes.
+    func scrollZoomForMeasuring(factor: CGFloat, at point: CGPoint) {
+        zoomByScroll(factor: factor, at: CGPoint(x: point.x, y: point.y + viewportTop))
+    }
+
     func zoomForMeasuring(to tile: CGFloat, anchor point: CGPoint) {
         tileAnimation = nil
+        scrollZoom = nil
         if zoomAnchor == nil { beginZoom(at: CGPoint(x: point.x, y: point.y + viewportTop)) }
         zoom(to: tile)
     }
 
     var isZoomingForTesting: Bool { isZooming }
+    var isEasingZoomForTesting: Bool { scrollZoom != nil }
+    /// Tests can't rely on the machine's setting. The hosted CI runners have Reduce Motion on.
+    var reducesMotionForTesting: Bool?
+    /// Runs a scroll's zoom out, since a test window has no display to drive it.
+    func finishScrollZoomForTesting() {
+        var time = 0.0
+        while scrollZoom != nil {
+            stepScrollZoom(at: time)
+            time += 1.0 / 120
+        }
+    }
     var layoutTile: CGFloat { tileLayout.tile }
     var isTrackingBandForTesting: Bool { band != nil }
     var isShowingBandForTesting: Bool { !bandLayer.isHidden }

@@ -112,6 +112,13 @@ final class PerformanceHarness: NSObject {
                     grid.zoomForMeasuring(to: size, anchor: center)
                     self.model.setTileSizeFromGesture(size)
                 })
+            case "gridscroll":
+                // Notches in bursts, in and out, as a wheel sends them.
+                scenarios.append(Scenario(name: name, frames: 600) { frame in
+                    if frame % 12 == 0, frame % 300 < 150 {
+                        grid.scrollZoomForMeasuring(factor: frame < 300 ? 1.15 : 1 / 1.15, at: center)
+                    }
+                })
             case "arrows", "arrowsfast":
                 let perFrame = name == "arrows" ? 0.25 : 2
                 scenarios.append(Scenario(name: name, frames: 480) { frame in

@@ -142,7 +142,9 @@ final class ViewerView: NSView, NSDraggingSource {
     override var acceptsFirstResponder: Bool { true }
     override var wantsUpdateLayer: Bool { true }
     private var scale: CGFloat { window?.backingScaleFactor ?? 2 }
-    private var reducesMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+    private var reducesMotion: Bool {
+        reducesMotionForTesting ?? NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         isOpen && !isClosing ? super.hitTest(point) : nil
@@ -791,6 +793,8 @@ final class ViewerView: NSView, NSDraggingSource {
 
     var zoomForTesting: CGFloat { geometry.zoom }
     var isEasingZoomForTesting: Bool { scrollZoom != nil }
+    /// Tests can't rely on the machine's setting. The hosted CI runners have Reduce Motion on.
+    var reducesMotionForTesting: Bool?
     /// Runs a scroll's zoom out, since a test window has no display to drive it.
     func finishScrollZoomForTesting() {
         var time = 0.0
