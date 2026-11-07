@@ -16,8 +16,15 @@ enum BrowserKeys {
                 model.openParent()
                 return true
             }
+            if flags == .command, key == .downArrow {
+                model.openViewer()
+                return true
+            }
             guard plain else { return false }
             switch key {
+            case .carriageReturn, .enter:
+                guard !extending else { return false }
+                model.openViewer()
             case .leftArrow: model.move(.left, extending: extending)
             case .rightArrow: model.move(.right, extending: extending)
             case .upArrow: model.move(.up, extending: extending)
@@ -30,11 +37,53 @@ enum BrowserKeys {
             }
             return true
         }
+        if plain, !extending, event.charactersIgnoringModifiers == " " {
+            model.openViewer()
+            return true
+        }
         guard typeToSelect, plain, let characters = event.charactersIgnoringModifiers, !characters.isEmpty,
-            // Space opens the viewer, and control characters aren't part of a name.
-            characters != " ", characters.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) })
+            // Control characters aren't part of a name.
+            characters.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) })
         else { return false }
         model.typeSelect(event.characters ?? characters)
+        return true
+    }
+}
+
+/// The viewer's keys. Arrow keys are matched by function, so they work on every layout. Zooming has
+/// menu items, and the menu handles them.
+@MainActor
+enum ViewerKeys {
+    private static let escape: UInt16 = 53
+
+    static func handle(_ event: NSEvent, model: BrowserModel) -> Bool {
+        let flags = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        if event.keyCode == escape, flags.isEmpty {
+            model.closeViewer()
+            return true
+        }
+        if flags == .command, event.specialKey == .upArrow {
+            model.closeViewer()
+            return true
+        }
+        guard flags.isEmpty else { return false }
+        if event.charactersIgnoringModifiers == " " {
+            // Space is a quick look toggle. For a video it'll play and pause, once videos play.
+            model.closeViewer()
+            return true
+        }
+        let isRepeat = event.isARepeat
+        switch event.specialKey {
+        case .leftArrow:
+            if !model.panViewer(dx: 1, dy: 0) { model.stepViewer(by: -1, isRepeat: isRepeat) }
+        case .rightArrow:
+            if !model.panViewer(dx: -1, dy: 0) { model.stepViewer(by: 1, isRepeat: isRepeat) }
+        case .upArrow: _ = model.panViewer(dx: 0, dy: 1)
+        case .downArrow: _ = model.panViewer(dx: 0, dy: -1)
+        case .home: model.stepViewer(to: 0)
+        case .end: model.stepViewer(to: model.result.count - 1)
+        default: return false
+        }
         return true
     }
 }

@@ -112,6 +112,13 @@ final class PerformanceHarness: NSObject {
                     grid.zoomForMeasuring(to: size, anchor: center)
                     self.model.setTileSizeFromGesture(size)
                 })
+            case "gridscroll":
+                // Notches in bursts, in and out, as a wheel sends them.
+                scenarios.append(Scenario(name: name, frames: 600) { frame in
+                    if frame % 12 == 0, frame % 300 < 150 {
+                        grid.scrollZoomForMeasuring(factor: frame < 300 ? 1.15 : 1 / 1.15, at: center)
+                    }
+                })
             case "arrows", "arrowsfast":
                 let perFrame = name == "arrows" ? 0.25 : 2
                 scenarios.append(Scenario(name: name, frames: 480) { frame in
@@ -131,6 +138,78 @@ final class PerformanceHarness: NSObject {
                 scenarios.append(Scenario(name: name, frames: 480) { frame in
                     if frame == 0 { self.model.setViewMode(.list) }
                     self.pressArrows(frame: frame, perFrame: perFrame)
+                })
+            case "vieweropen":
+                // Open and close the same photo, once a second, while the flights run in Core Animation.
+                scenarios.append(Scenario(name: name, frames: 480) { frame in
+                    switch frame % 120 {
+                    case 0: self.model.openViewer()
+                    case 60: self.model.closeViewer()
+                    default: break
+                    }
+                })
+            case "viewerarrows", "viewerarrowsfast":
+                let perFrame = name == "viewerarrows" ? 0.25 : 2
+                scenarios.append(Scenario(name: name, frames: 480) { frame in
+                    if frame == 0 { self.model.openViewer() }
+                    self.arrowCredit += perFrame
+                    while self.arrowCredit >= 1 {
+                        self.arrowCredit -= 1
+                        // A held key starts with one press, and repeats after it.
+                        self.model.stepViewer(by: 1, isRepeat: frame > 0)
+                    }
+                    if frame == 479 { self.model.closeViewer(animated: false) }
+                })
+            case "viewerstep", "viewerjump":
+                // One photo at a time, resting long enough to load. A step finds its neighbor ready,
+                // and a jump of 50 finds nothing ready, so the pair brackets what the eye sees.
+                let distance = name == "viewerstep" ? 1 : 50
+                scenarios.append(Scenario(name: name, frames: 1440) { frame in
+                    if frame == 0 {
+                        self.sharpTimes = []
+                        self.view.viewer.sharpObserver = { self.sharpTimes.append($0) }
+                        self.model.openViewer()
+                    }
+                    if frame > 0, frame.isMultiple(of: 60) { self.model.stepViewer(by: distance, isRepeat: false) }
+                    if frame == 1439 { self.model.closeViewer(animated: false) }
+                })
+            case "viewerzoom":
+                scenarios.append(Scenario(name: name, frames: 480) { frame in
+                    if frame == 0 { self.model.openViewer() }
+                    let phase = sin(Double(frame) / 480 * 2 * .pi * 2)
+                    self.view.viewer.setZoomForMeasuring(CGFloat(2.5 + 1.5 * phase))
+                    self.view.viewer.stepForMeasuring(pixelsPan: frame % 240 < 120 ? 6 : -6)
+                    if frame == 479 { self.model.closeViewer(animated: false) }
+                })
+            case "viewerscroll":
+                // Notches in bursts, in and out, as a wheel sends them.
+                scenarios.append(Scenario(name: name, frames: 480) { frame in
+                    if frame == 0 { self.model.openViewer() }
+                    if frame >= 30, frame % 12 == 0 {
+                        self.view.viewer.scrollForMeasuring(factor: frame % 240 < 120 ? 1.3 : 1 / 1.3)
+                    }
+                    if frame == 479 { self.model.closeViewer(animated: false) }
+                })
+            case "listviewer":
+                scenarios.append(Scenario(name: name, frames: 240) { frame in
+                    if frame == 0 { self.model.setViewMode(.list) }
+                    if frame == 30 { self.model.openViewer() }
+                    if frame == 150 { self.model.closeViewer() }
+                })
+            case "copyall":
+                // Copies everything, and keeps the frames going while it lands.
+                scenarios.append(Scenario(name: name, frames: 600) { frame in
+                    if frame == 30 {
+                        self.model.selectAll()
+                        let start = CACurrentMediaTime()
+                        self.model.copy()
+                        let task = self.model.copyTask
+                        Task { @MainActor in
+                            await task?.value
+                            self.sharpTimes.append((CACurrentMediaTime() - start) * 1000)
+                        }
+                    }
+                    if frame == 590 { self.model.selectNone() }
                 })
             case "listswitch":
                 scenarios.append(Scenario(name: name, frames: 60) { frame in
@@ -158,6 +237,7 @@ final class PerformanceHarness: NSObject {
     }
 
     private var arrowCredit = 0.0
+    private var sharpTimes: [Double] = []
 
     private func pressArrows(frame: Int, perFrame: Double, extending: Bool = false) {
         arrowCredit += perFrame
@@ -209,7 +289,12 @@ final class PerformanceHarness: NSObject {
             sorted.isEmpty ? 0 : sorted[min(sorted.count - 1, Int(Double(sorted.count) * value))]
         }
         let budget = duration * 1000 * 1.5
+        let sharp = sharpTimes.sorted()
+        sharpTimes = []
+        view.viewer.sharpObserver = nil
         report.append([
+            "sharpMs": sharp.isEmpty
+                ? [:] : ["count": sharp.count, "p50": sharp[sharp.count / 2], "max": sharp[sharp.count - 1]],
             "scenario": name,
             "frames": frameIntervals.count,
             "fps": frameIntervals.isEmpty ? 0 : 1000 / (frameIntervals.reduce(0, +) / Double(frameIntervals.count)),
@@ -240,6 +325,8 @@ final class PerformanceHarness: NSObject {
             "windowPoints": [view.bounds.width, view.bounds.height],
             "backingScale": view.window?.backingScaleFactor ?? 0,
             "maximumFPS": view.window?.screen?.maximumFramesPerSecond ?? 0,
+            "edrNow": view.window?.screen?.maximumExtendedDynamicRangeColorComponentValue ?? 0,
+            "edrPotential": view.window?.screen?.maximumPotentialExtendedDynamicRangeColorComponentValue ?? 0,
             "scenarios": report,
         ]
         if let data = try? JSONSerialization.data(withJSONObject: output, options: [.prettyPrinted, .sortedKeys]) {

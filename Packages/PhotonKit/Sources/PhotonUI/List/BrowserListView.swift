@@ -39,6 +39,11 @@ private enum ListColumn: String, CaseIterable {
 final class BrowserTableView: NSTableView {
     weak var list: BrowserListView?
 
+    override func mouseDown(with event: NSEvent) {
+        list?.prepareDrag(at: event)
+        super.mouseDown(with: event)
+    }
+
     override func keyDown(with event: NSEvent) {
         if list?.handleKey(event) != true { super.keyDown(with: event) }
     }
@@ -159,6 +164,10 @@ final class BrowserListView: NSView, BrowserContent, NSTableViewDataSource, NSTa
         table.usesAlternatingRowBackgroundColors = true
         table.style = .inset
         table.setAccessibilityIdentifier("photon.list")
+        table.target = self
+        table.doubleAction = #selector(openClickedRow)
+        table.setDraggingSourceOperationMask(.copy, forLocal: false)
+        table.setDraggingSourceOperationMask(.copy, forLocal: true)
         for column in ListColumn.allCases {
             let tableColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(column.rawValue))
             tableColumn.title = column.title
@@ -294,6 +303,18 @@ final class BrowserListView: NSView, BrowserContent, NSTableViewDataSource, NSTa
     }
 
     func focus() { window?.makeFirstResponder(table) }
+
+    func tileRect(row: Int, in view: NSView) -> CGRect? {
+        guard row < result.count, !isHidden else { return nil }
+        // The viewer closes in one step, and a reveal would otherwise wait for the next frame.
+        pendingReveal = false
+        table.scrollRowToVisible(row)
+        table.layoutSubtreeIfNeeded()
+        guard let cell = table.view(atColumn: 0, row: row, makeIfNecessary: true) as? ListCell else { return nil }
+        return cell.thumbnail.convert(cell.thumbnail.bounds, to: view)
+    }
+
+    func hideTile(row: Int?) {}
     func tileSizeDidChange() {}
     func steppedTileSize(from size: CGFloat, larger: Bool) -> CGFloat { size }
     func thumbnailsReady() { requestTick() }
@@ -309,6 +330,32 @@ final class BrowserListView: NSView, BrowserContent, NSTableViewDataSource, NSTa
 
     func handleKey(_ event: NSEvent) -> Bool {
         BrowserKeys.handle(event, model: model, typeToSelect: true)
+    }
+
+    @objc private func openClickedRow() {
+        guard table.clickedRow >= 0 else { return }
+        model.openViewer()
+    }
+
+    func prepareDrag(at event: NSEvent) {
+        let row = table.row(at: table.convert(event.locationInWindow, from: nil))
+        guard row >= 0, model.selection.isSelected(row) else { return }
+        model.prepareDrag()
+    }
+
+    /// The table asks once per selected row, as the drag starts. The URLs were fetched when the button
+    /// went down, because this has to answer at once.
+    func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
+        model.fileDrag.url(forRow: row).map { $0 as NSURL }
+    }
+
+    func tableView(
+        _ tableView: NSTableView, draggingSession session: NSDraggingSession, willBeginAt screenPoint: NSPoint,
+        forRowIndexes rowIndexes: IndexSet
+    ) {
+        session.animatesToStartingPositionsOnCancelOrFail = true
+        session.draggingFormation = .list
+        model.fileDrag.addRemainingFiles(to: session)
     }
 
     func contextMenu(for event: NSEvent) -> NSMenu? {

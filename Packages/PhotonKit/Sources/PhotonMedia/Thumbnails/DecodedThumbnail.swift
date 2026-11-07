@@ -30,25 +30,9 @@ public final class DecodedThumbnail: @unchecked Sendable {
     static func decode(_ data: Data, tier: ThumbnailTier) -> DecodedThumbnail? {
         guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
             let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
-            let space = CGColorSpace(name: CGColorSpace.displayP3)
+            let surface = SurfaceDrawing.displayP3Surface(of: image)
         else { return nil }
         let (width, height) = (image.width, image.height)
-        guard
-            let surface = IOSurface(properties: [
-                .width: width, .height: height, .bytesPerElement: 4,
-                .pixelFormat: 0x4247_5241 as UInt32,  // 'BGRA'
-            ])
-        else { return nil }
-        surface.setAttachment(CGColorSpace.displayP3 as String, forKey: "IOSurfaceColorSpace")
-        surface.lock(options: [], seed: nil)
-        defer { surface.unlock(options: [], seed: nil) }
-        let bitmapInfo = CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
-        guard
-            let context = CGContext(
-                data: surface.baseAddress, width: width, height: height, bitsPerComponent: 8,
-                bytesPerRow: surface.bytesPerRow, space: space, bitmapInfo: bitmapInfo)
-        else { return nil }
-        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
         return DecodedThumbnail(surface: surface, tier: tier, width: width, height: height)
     }
 }

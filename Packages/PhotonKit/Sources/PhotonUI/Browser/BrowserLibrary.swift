@@ -21,6 +21,8 @@ public final class BrowserLibrary {
     @ObservationIgnored let indexer: LibraryIndexer
     @ObservationIgnored let generator: ThumbnailGenerator
     @ObservationIgnored let loader: ThumbnailLoader
+    @ObservationIgnored let originals: OriginalReader
+    @ObservationIgnored let pasteboard: MediaPasteboard
     @ObservationIgnored private var packs: ThumbnailPackStore
     @ObservationIgnored private var monitor: VolumeEventMonitor?
     @ObservationIgnored private var backgroundTasks: [VolumeID: Task<Void, Never>] = [:]
@@ -41,7 +43,18 @@ public final class BrowserLibrary {
         self.packs = packs
         let generator = ThumbnailGenerator(store: store, packs: packs, scheduler: { indexer.scheduler(for: $0) })
         self.generator = generator
-        loader = ThumbnailLoader(store: store, packs: packs, generator: generator, cache: ThumbnailMemoryCache())
+        let loader = ThumbnailLoader(store: store, packs: packs, generator: generator, cache: ThumbnailMemoryCache())
+        self.loader = loader
+        let originals = OriginalReader(store: store, scheduler: { indexer.scheduler(for: $0) })
+        self.originals = originals
+        pasteboard = MediaPasteboard { file, type in
+            // An offline photo still has its stored thumbnail, which is better than nothing to paste.
+            let bytes = try? await originals.read(file.instance, priority: .visible)
+            return await PasteboardImage.offPool {
+                guard let data = bytes ?? loader.storedThumbnailBlocking(asset: file.asset) else { return nil }
+                return PasteboardImage.encode(data, as: type)
+            }
+        }
         monitor = VolumeEventMonitor(
             center: NSWorkspace.shared.notificationCenter,
             willUnmount: { [weak self] path in

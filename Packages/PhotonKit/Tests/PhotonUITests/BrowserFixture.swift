@@ -111,6 +111,43 @@ final class BrowserFixture {
         }
     }
 
+    /// A pinch at a point in the window, as the system sends one.
+    func gesture(magnification: CGFloat, at point: CGPoint) -> NSEvent? {
+        guard let event = CGEvent(source: nil) else { return nil }
+        let gesture: Int64 = 29
+        let magnify: Int64 = 8
+        let screen = window.convertPoint(toScreen: point)
+        let height = NSScreen.screens.first?.frame.height ?? 0
+        event.location = CGPoint(x: screen.x, y: height - screen.y)
+        event.setIntegerValueField(CGEventField(rawValue: 55)!, value: gesture)
+        event.setIntegerValueField(CGEventField(rawValue: 110)!, value: magnify)
+        event.setDoubleValueField(CGEventField(rawValue: 113)!, value: magnification)
+        event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(window.windowNumber))
+        return NSEvent(cgEvent: event)
+    }
+
+    /// A mouse wheel, in lines.
+    func scroll(lines: Int32, modifiers: NSEvent.ModifierFlags = []) -> NSEvent? {
+        guard
+            let event = CGEvent(
+                scrollWheelEvent2Source: nil, units: .line, wheelCount: 1, wheel1: lines, wheel2: 0, wheel3: 0)
+        else { return nil }
+        event.flags = CGEventFlags(rawValue: UInt64(modifiers.rawValue))
+        return NSEvent(cgEvent: event)
+    }
+
+    /// A trackpad's scroll, in points, in the middle of a gesture.
+    func scroll(points: Int32, modifiers: NSEvent.ModifierFlags = []) -> NSEvent? {
+        guard
+            let event = CGEvent(
+                scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: points, wheel2: 0, wheel3: 0)
+        else { return nil }
+        event.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+        event.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(CGScrollPhase.changed.rawValue))
+        event.flags = CGEventFlags(rawValue: UInt64(modifiers.rawValue))
+        return NSEvent(cgEvent: event)
+    }
+
     /// What a display link would run. A test window has no display to drive one.
     func flushFrame() {
         _ = grid.tick()
@@ -133,6 +170,12 @@ final class BrowserFixture {
         grid.handleMouseDown(mouseEvent(.leftMouseDown, at: point, modifiers: modifiers))
         flushFrame()
         return point
+    }
+
+    /// Presses at a point in the window, tile or not, and holds.
+    func press(at point: CGPoint) {
+        grid.handleMouseDown(mouseEvent(.leftMouseDown, at: point))
+        flushFrame()
     }
 
     func drag(to point: CGPoint) {
@@ -169,6 +212,31 @@ final class BrowserFixture {
         NSEvent.mouseEvent(
             with: type, location: point, modifierFlags: modifiers, timestamp: 0, windowNumber: window.windowNumber,
             context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+    }
+
+    var viewer: ViewerView { container.viewer }
+
+    /// A plain key by its characters: Space, Return or Escape.
+    func press(characters: String, code: UInt16, modifiers: NSEvent.ModifierFlags = [], isRepeat: Bool = false) {
+        let event = NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, characters: characters,
+            charactersIgnoringModifiers: characters, isARepeat: isRepeat, keyCode: code)!
+        window.firstResponder?.keyDown(with: event)
+        flushFrame()
+    }
+
+    func pressSpace() { press(characters: " ", code: 49) }
+    func pressReturn() { press(characters: "\r", code: 36) }
+    func pressEscape() { press(characters: "\u{1B}", code: 53) }
+
+    /// Sends a held key's repeat, or a key with modifiers.
+    func hold(_ key: Key) {
+        let event = NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: key.flags, timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, characters: key.characters,
+            charactersIgnoringModifiers: key.characters, isARepeat: true, keyCode: key.code)!
+        window.firstResponder?.keyDown(with: event)
     }
 
     var currentRow: Int? { model.selection.currentRow }

@@ -5,8 +5,12 @@ import AppKit
 enum BrowserContextMenu {
     static func make(model: BrowserModel) -> NSMenu {
         let menu = NSMenu()
-        let rows = Array(model.selection.rows.prefix(32))
+        let rows = model.isViewerOpen ? model.viewerRow.map { [$0] } ?? [] : Array(model.selection.rows.prefix(32))
         let target = MenuTarget(model: model, rows: rows)
+        let copy = NSMenuItem(title: "Copy", action: #selector(MenuTarget.copyFiles), keyEquivalent: "")
+        copy.target = target
+        copy.representedObject = target
+        menu.addItem(copy)
         let show = NSMenuItem(title: "Show in Finder", action: #selector(MenuTarget.showInFinder), keyEquivalent: "")
         show.target = target
         // The menu doesn't retain targets, so an item carries its own.
@@ -24,6 +28,7 @@ enum BrowserContextMenu {
             self.rows = rows
         }
 
+        @MainActor @objc func copyFiles() { model.copy() }
         @MainActor @objc func showInFinder() { model.showInFinder(rows: rows) }
     }
 }

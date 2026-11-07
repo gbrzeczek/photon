@@ -10,12 +10,19 @@ public struct ThumbnailRequest: Sendable, Hashable {
     public var instance: FileInstanceID
     public var wanted: ThumbnailTier
     public var priority: IOPriority
+    /// Whether a missing size should be made from the original. The viewer reads the original anyway,
+    /// so for it this would be a second read of the same file.
+    public var generatesMissing: Bool
 
-    public init(asset: AssetID, instance: FileInstanceID, wanted: ThumbnailTier, priority: IOPriority) {
+    public init(
+        asset: AssetID, instance: FileInstanceID, wanted: ThumbnailTier, priority: IOPriority,
+        generatesMissing: Bool = true
+    ) {
         self.asset = asset
         self.instance = instance
         self.wanted = wanted
         self.priority = priority
+        self.generatesMissing = generatesMissing
     }
 }
 
@@ -109,6 +116,13 @@ public final class ThumbnailLoader: @unchecked Sendable {
         return !finished.isEmpty
     }
 
+    /// The bytes of the largest stored thumbnail, which is all an offline photo has. Blocks on the
+    /// database and the packs, so never call it on the main thread, or from Swift's cooperative pool.
+    public func storedThumbnailBlocking(asset: AssetID) -> Data? {
+        let locations = (try? store.thumbnailLocationsBlocking(assets: [asset])[asset]) ?? []
+        return locations.max { $0.tier < $1.tier }.flatMap { packs.readBlocking($0) }
+    }
+
     // MARK: Workers
 
     private func work() {
@@ -159,7 +173,7 @@ public final class ThumbnailLoader: @unchecked Sendable {
                 bestTier = tier
                 break
             }
-            if let bestTier, bestTier >= request.wanted {
+            if bestTier.map({ $0 >= request.wanted }) == true || !request.generatesMissing {
                 finish(request)
             } else {
                 // Originals too small for this size never get it. The generator knows, and stops at once.
