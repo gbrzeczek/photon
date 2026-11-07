@@ -52,7 +52,10 @@ public struct PhotonRootView: View {
             quitObserver = NotificationCenter.default.addObserver(
                 forName: NSApplication.willTerminateNotification, object: nil, queue: .main
             ) { [weak model] _ in
-                MainActor.assumeIsolated { model?.saveSessionBeforeQuit() }
+                MainActor.assumeIsolated {
+                    model?.saveSessionBeforeQuit()
+                    library.pasteboard.applicationWillQuit()
+                }
             }
             await library.start()
             if !restored { model.openFirstFolder() }
@@ -87,7 +90,7 @@ private struct BrowserShell: View {
         }
         .focusedSceneValue(\.browserModel, model)
         .toolbar { toolbar }
-        .navigationTitle(title)
+        .modifier(WindowTitle(model: model, folder: title))
     }
 
     private var title: String {
@@ -116,15 +119,9 @@ private struct BrowserShell: View {
 
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
-        ToolbarItem(placement: .navigation) {
-            Button("Enclosing Folder", systemImage: "chevron.up") { model.openParent() }
-                .disabled(!model.canOpenParent)
-                .help("Go to the enclosing folder")
-        }
+        ToolbarItem(placement: .navigation) { BackButton(model: model) }
         ToolbarItemGroup {
-            if model.viewMode == .tiles {
-                TileSizeSlider(model: model)
-            }
+            SizeControl(model: model)
             Picker(
                 "View",
                 selection: Binding(get: { model.viewMode }, set: { model.setViewMode($0) })
@@ -155,7 +152,7 @@ private struct BrowserShell: View {
     }
 }
 
-/// Its own view, like `TileSizeSlider`, because these values change often. Reading them in `BrowserShell`
+/// Its own view, like `SizeControl`, because these values change often. Reading them in `BrowserShell`
 /// would rebuild the toolbar for every step of a pinch and every change of selection.
 private struct StatusBar: View {
     let library: BrowserLibrary
@@ -165,7 +162,7 @@ private struct StatusBar: View {
         HStack {
             Text(status)
             Spacer()
-            if let message = library.lastError ?? (library.activity.isEmpty ? nil : library.activity) {
+            if let message = model.notice ?? library.lastError ?? (library.activity.isEmpty ? nil : library.activity) {
                 Text(message).lineLimit(1)
             }
         }
@@ -178,6 +175,7 @@ private struct StatusBar: View {
     }
 
     private var status: String {
+        if model.isViewerOpen, !model.viewerStatus.isEmpty { return model.viewerStatus }
         let items = model.itemCount.formatted()
         let noun = model.itemCount == 1 ? "item" : "items"
         return model.selectedCount > 0
@@ -185,17 +183,58 @@ private struct StatusBar: View {
     }
 }
 
-private struct TileSizeSlider: View {
+/// Up a folder, or back out of the viewer. Its own view, so that opening the viewer doesn't rebuild the
+/// toolbar during the transition.
+private struct BackButton: View {
     let model: BrowserModel
 
     var body: some View {
-        Slider(
-            value: Binding(get: { model.tileSize }, set: { model.setTileSizeFromSlider($0) }),
-            in: Double(TileMetrics.minimumTile)...Double(TileMetrics.maximumTile)
-        )
-        .frame(width: 120)
-        .accessibilityLabel("Tile size")
-        .help("Tile size")
+        if model.isViewerOpen {
+            Button("Back", systemImage: "chevron.backward") { model.closeViewer() }
+                .help("Go back to the browser")
+        } else {
+            Button("Enclosing Folder", systemImage: "chevron.up") { model.openParent() }
+                .disabled(!model.canOpenParent)
+                .help("Go to the enclosing folder")
+        }
+    }
+}
+
+/// Tile size in the browser, and zoom in the viewer. Its own view, so that neither rebuilds the toolbar.
+private struct SizeControl: View {
+    let model: BrowserModel
+
+    var body: some View {
+        if model.isViewerOpen {
+            ControlGroup {
+                Button("Zoom Out", systemImage: "minus.magnifyingglass") { model.stepZoom(larger: false) }
+                    .help("Zoom out")
+                Button("Zoom In", systemImage: "plus.magnifyingglass") { model.stepZoom(larger: true) }
+                    .help("Zoom in")
+            }
+            .disabled(model.viewerCaption?.isVideo == true)
+        } else if model.viewMode == .tiles {
+            Slider(
+                value: Binding(get: { model.tileSize }, set: { model.setTileSizeFromSlider($0) }),
+                in: Double(TileMetrics.minimumTile)...Double(TileMetrics.maximumTile)
+            )
+            .frame(width: 120)
+            .accessibilityLabel("Tile size")
+            .help("Tile size")
+        }
+    }
+}
+
+/// The folder in the browser, and the photo's name and date in the viewer, as Preview shows a file's.
+/// A modifier, so that a new photo changes the title without running `BrowserShell`'s body.
+private struct WindowTitle: ViewModifier {
+    let model: BrowserModel
+    let folder: String
+
+    func body(content: Content) -> some View {
+        content
+            .navigationTitle(model.viewerCaption?.name ?? folder)
+            .navigationSubtitle(model.viewerCaption?.detail ?? "")
     }
 }
 
@@ -268,6 +307,8 @@ public struct PhotonCommands: Commands {
 
     public init() {}
 
+    private var isViewing: Bool { model?.isViewerOpen == true }
+
     public var body: some Commands {
         CommandGroup(before: .toolbar) {
             Button("as Tiles") { model?.setViewMode(.tiles) }
@@ -277,12 +318,15 @@ public struct PhotonCommands: Commands {
                 .keyboardShortcut("2", modifiers: .command)
                 .disabled(model == nil)
             Divider()
-            Button("Increase Tile Size") { model?.stepTileSize(larger: true) }
+            Button(isViewing ? "Zoom In" : "Increase Tile Size") { model?.stepZoom(larger: true) }
                 .keyboardShortcut("=", modifiers: .command)
-                .disabled(model?.viewMode != .tiles)
-            Button("Decrease Tile Size") { model?.stepTileSize(larger: false) }
+                .disabled(!isViewing && model?.viewMode != .tiles)
+            Button(isViewing ? "Zoom Out" : "Decrease Tile Size") { model?.stepZoom(larger: false) }
                 .keyboardShortcut("-", modifiers: .command)
-                .disabled(model?.viewMode != .tiles)
+                .disabled(!isViewing && model?.viewMode != .tiles)
+            Button("Zoom to Fit") { model?.zoomViewerToFit() }
+                .keyboardShortcut("0", modifiers: .command)
+                .disabled(!isViewing)
             Toggle(
                 "Keep Aspect Ratio",
                 isOn: Binding(
@@ -290,6 +334,13 @@ public struct PhotonCommands: Commands {
                     set: { model?.setLayoutMode($0 ? .aspect : .square) })
             )
             .disabled(model == nil)
+            Divider()
+            Button("Open in Viewer") { model?.openViewer() }
+                .keyboardShortcut(.downArrow, modifiers: .command)
+                .disabled(model?.canOpenViewer != true)
+            Button("Close Viewer") { model?.closeViewer() }
+                .keyboardShortcut(.escape, modifiers: [])
+                .disabled(!isViewing)
             Divider()
             if let model {
                 Menu("Sort By") { SortMenuItems(model: model) }

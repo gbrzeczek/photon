@@ -40,6 +40,10 @@ protocol BrowserContent: AnyObject {
     func layoutModeDidChange()
     /// Finished thumbnails are waiting in the loader.
     func thumbnailsReady()
+    /// Where a row is showing, in `view`'s coordinates. Nil if it isn't on screen.
+    func tileRect(row: Int, in view: NSView) -> CGRect?
+    /// Hides a tile while its photo flies to or from it. Nil shows it again.
+    func hideTile(row: Int?)
 }
 
 /// The state of one window's browser. Grid and list share this: one data source, one selection.
@@ -54,12 +58,25 @@ public final class BrowserModel {
     public private(set) var itemCount = 0
     public private(set) var selectedCount = 0
     public private(set) var isLoading = false
+    /// The viewer is over the grid and list. Read by the shell and the menus, so it changes rarely.
+    public internal(set) var isViewerOpen = false
+    /// What the status bar says while the viewer is open. Waits for a held key, like the disk does.
+    public internal(set) var viewerStatus = ""
+    /// The name and date of the photo in the viewer, for the window's title. Waits for a held key too.
+    public internal(set) var viewerCaption: ViewerCaption?
+    /// Something worth a line in the status bar, such as what a copy left out.
+    public internal(set) var notice: String?
 
     @ObservationIgnored let library: BrowserLibrary
     @ObservationIgnored let selection = SelectionModel()
     @ObservationIgnored let pages: RowPageCache
     @ObservationIgnored private(set) var result = BrowseResult.empty
     @ObservationIgnored private var grid: (any BrowserContent)?
+    @ObservationIgnored weak var viewer: ViewerView?
+    @ObservationIgnored var copyTask: Task<Void, Never>?
+    @ObservationIgnored var noticeTask: Task<Void, Never>?
+    @ObservationIgnored var captionTask: Task<Void, Never>?
+    @ObservationIgnored let fileDrag = FileDragController()
     @ObservationIgnored private var list: (any BrowserContent)?
     @ObservationIgnored private var showMode: ((BrowserViewMode) -> Void)?
     @ObservationIgnored private var hasLaidOutContent = false
@@ -85,11 +102,14 @@ public final class BrowserModel {
         pages = RowPageCache(store: library.store)
         library.onContentChanged = { [weak self] in self?.contentChanged() }
         library.loader.setFinishedHandler { [weak self] in
-            DispatchQueue.main.async { self?.active?.thumbnailsReady() }
+            DispatchQueue.main.async {
+                self?.active?.thumbnailsReady()
+                self?.viewer?.thumbnailsReady()
+            }
         }
     }
 
-    private var active: (any BrowserContent)? { viewMode == .tiles ? grid : list }
+    var active: (any BrowserContent)? { viewMode == .tiles ? grid : list }
 
     func attach(grid: any BrowserContent, list: any BrowserContent, showMode: @escaping (BrowserViewMode) -> Void) {
         self.grid = grid
@@ -128,6 +148,7 @@ public final class BrowserModel {
 
     public func open(_ scope: BrowseScope) {
         guard scope != self.scope else { return }
+        closeViewer(animated: false)
         flushSession()
         Task {
             let session = try? await library.store.session(for: scope)
@@ -142,6 +163,7 @@ public final class BrowserModel {
     }
 
     private func apply(_ session: BrowseSession) {
+        closeViewer(animated: false)
         scope = session.scope
         sort = session.sort
         viewMode = BrowserViewMode(rawValue: session.viewMode) ?? .tiles
@@ -251,6 +273,9 @@ public final class BrowserModel {
         grid?.resultDidChange(next, anchor: anchor, rows: rows, prefix: prefix)
         list?.resultDidChange(next, anchor: anchor, rows: rows, prefix: prefix)
         isLoading = false
+        if isViewerOpen {
+            if next.count == 0 { closeViewer(animated: false) } else { viewer?.resultDidChange() }
+        }
         onResult?(next.count)
     }
 
@@ -300,6 +325,7 @@ public final class BrowserModel {
 
     public func setViewMode(_ mode: BrowserViewMode) {
         guard mode != viewMode else { return }
+        closeViewer(animated: false)
         viewMode = mode
         // The view has to be showing before it can take focus.
         showMode?(mode)
@@ -390,7 +416,7 @@ public final class BrowserModel {
         selectionChanged()
     }
 
-    private func selectionChanged() {
+    func selectionChanged() {
         selectedCount = selection.count
         grid?.selectionDidChange()
         list?.selectionDidChange()
@@ -428,7 +454,7 @@ public final class BrowserModel {
 
     // MARK: Sessions
 
-    private func saveSessionSoon() {
+    func saveSessionSoon() {
         saveTask?.cancel()
         saveTask = Task {
             try? await Task.sleep(for: .seconds(1))

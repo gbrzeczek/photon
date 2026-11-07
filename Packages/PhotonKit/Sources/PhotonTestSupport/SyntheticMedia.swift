@@ -45,6 +45,30 @@ public enum SyntheticMedia {
         encode(options, type: .heic)
     }
 
+    /// A photo with an ISO gain map, reaching four times SDR white on its right edge. Nil where the
+    /// machine can't encode one.
+    public static func hdrGainMap(width: Int = 400, height: Int = 200, type: UTType = .heic) -> Data? {
+        guard let space = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3),
+            let context = CGContext(
+                data: nil, width: width, height: height, bitsPerComponent: 16, bytesPerRow: 0, space: space,
+                bitmapInfo: CGBitmapInfo.floatComponents.rawValue | CGBitmapInfo.byteOrder16Little.rawValue
+                    | CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return nil }
+        for x in 0..<width {
+            let value = CGFloat(x + 1) / CGFloat(width) * 4
+            context.setFillColor(CGColor(colorSpace: space, components: [value, value, value, 1])!)
+            context.fill(CGRect(x: x, y: 0, width: 1, height: height))
+        }
+        guard let image = context.makeImage()?.copyWithCalculatedHDRStats() else { return nil }
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(output, type.identifier as CFString, 1, nil) else {
+            return nil
+        }
+        let properties = [kCGImageDestinationEncodeRequest: kCGImageDestinationEncodeToISOGainmap]
+        CGImageDestinationAddImage(destination, image, properties as CFDictionary)
+        return CGImageDestinationFinalize(destination) ? output as Data : nil
+    }
+
     private static func encode(_ options: ImageOptions, type: UTType) -> Data? {
         guard let image = noiseImage(width: options.width, height: options.height, seed: options.seed) else {
             return nil

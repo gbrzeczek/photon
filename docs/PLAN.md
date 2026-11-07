@@ -2,7 +2,7 @@
 
 Photon is a native macOS browser for photos and videos stored in local folders and on removable media. This document records the product scope, architecture, milestones and open risks.
 
-**Status:** Milestone 2 is built and measured on a real screen, on a seeded 100k library on the internal disk and on the T7 Touch's real library of 27,235 photos. The drive doesn't hold 100k files, so those two together stand in for a 100k library on the drive. See [Milestone 2 results](#milestone-2-results). Spike code lives in [`Spikes/`](../Spikes/README.md), and results are under [Milestone 0 spikes](#milestone-0-spikes) and [Milestone 1 results](#milestone-1-results).
+**Status:** Milestone 3 is built and measured on a real screen, on a seeded 100k library and on the T7 Touch's real library of 27,235 assets. See [Milestone 3 results](#milestone-3-results) and [Milestone 2 results](#milestone-2-results). The drive doesn't hold 100k files, so those two libraries together stand in for a 100k library on the drive. Spike code lives in [`Spikes/`](../Spikes/README.md), and results are under [Milestone 0 spikes](#milestone-0-spikes) and [Milestone 1 results](#milestone-1-results).
 
 ## Product scope
 
@@ -51,6 +51,9 @@ Cloud backup, duplicate detection and face recognition are future features (see 
 | Browse rows | One row per asset. Exact duplicates show as one tile, the first in path order | The current item and selection are assets, so two rows for one asset would be ambiguous |
 | Sorting | Rows are sorted in process on integers or byte keys, not by `ORDER BY` | A natural name sort with `localizedStandardCompare` costs seconds at 100k rows. The byte keys are close to Finder's order for camera names, but aren't identical |
 | Video | AVFoundation first, with a libmpv fallback, behind one interface. libmpv draws through its render API into a `CAOpenGLLayer`, from our own LGPL build | Spike 2: every test format played with no dropped frames on both embedding paths, and this one needs no patched mpv |
+| Viewer | An overlay in the same window, one layer whose contents move from thumbnail to preview to full resolution. It covers the detail column, so the sidebar stays | The grid is never torn down, and a sharper image lands without anything moving |
+| Previews | The size that fills the viewer for that photo, not the screen | A screen-sized preview would be scaled back down by the GPU, which costs sharpness as well as memory |
+| Pasteboard writes | Off the main thread, after clearing the pasteboard at once | Writing costs about 150 µs per real file, and it must never stall a frame |
 | Distribution | No sandbox, no App Store. Self-signed DMGs built by GitHub Actions | Personal and portfolio project, no paid program needed |
 
 ## Architecture
@@ -180,10 +183,36 @@ First-time indexing takes about 30 minutes per 100k photos at full speed, and ab
 - Images load progressively: thumbnail, preview, full resolution.
 - Neighboring photos are preloaded.
 - HDR content uses extended dynamic range.
+- The viewer's background is the window background, so it follows light and dark mode.
+- **Three steps.** The stored thumbnail shows at once. A preview comes next, then, after a photo has stayed for 300 ms or as soon as a zoom needs it, the original's own pixels. One read serves both decodes. Fit shows the preview, placed on whole device pixels, and full resolution is only used once a zoom needs more pixels than the preview has.
+- **Preloading.** The next two photos in the direction of travel and one behind get previews, at the `ahead` priority. Seven photos stay decoded, and only the current one keeps full resolution. Their originals stay in memory up to 300 MB, so that going on to a neighbor doesn't read the file again.
+- **A held key touches no disk.** A key repeat only shows what's in memory, and asks for the stored thumbnail, which is cancelled on moving on. Reads and the status bar wait until the key has rested for 120 ms. A single press starts at once.
+- **The grid and list stay still while the viewer moves.** The selection model follows along, but neither is told until the viewer closes. A held key costs them nothing.
+- **Closing** selects the photo you ended on only if you moved. Opening and closing in place keeps a multiple selection.
+- **Zoom** is a multiple of fit, and the center is a point on the photo, so neither depends on which decoded size is showing. A step stops at actual size. Zoom goes up to 8× actual size, and returns to fit on moving to another photo.
+- **Zoom controls.** A pinch, a double click, Command-Equals and Command-Minus, and two buttons in the toolbar where the tile size slider sits in the browser. A mouse wheel zooms around the pointer, because a mouse has no pinch, and so does any scroll with Command or Option held. A scroll's zoom eases toward where the notches add up to, frame by frame, finishing in about 180 ms, and Reduce Motion goes straight there. A pinch stays exact, since it follows the fingers. A trackpad's plain scroll still pans and swipes.
+- **Title.** The window's title shows the file name, and its subtitle the capture date, the way Preview shows a document. It comes from the library, so it works offline, and it waits for a held key like the status bar does. It sets the title through a modifier, so that a new photo doesn't run `BrowserShell`'s body. The folder's name comes back on closing.
+- **More Info** is the inspector, which is Milestone 5, so the context menu doesn't have it yet.
+- **Limits.** Decoding stops at 16,384 px on the long edge, the texture limit, and at 120 MP. A larger photo shows smaller. That's 480 MB at 8 bits, and twice that for HDR.
+- **HDR** decodes with `kCGImageSourceDecodeToHDR` into half-float pixels in extended linear P3. The surface is tagged with `kIOSurfaceContentHeadroom`, and the layer sets `preferredDynamicRange = .high`, so extended range is only used for photos that have it. Thumbnails stay SDR, so an HDR photo brightens when its preview lands.
+- **Transitions** fly in Core Animation, from the tile's crop to the whole photo and back, so they don't depend on the main thread. Reduce Motion replaces them with a fade.
+- **Offline**, or if the file changed, the thumbnail stays and nothing fails. Moving on works as usual.
+- **Permission.** A build with no stable signature, started by Launch Services, may not get removable-volume access, and then reads fail with the same quiet result, so the viewer stays on thumbnails with no explanation. Milestone 7's signing should settle this. If it doesn't, this needs a message of its own.
+- **Videos until Milestone 6** show the film symbol, and the duration in the status bar. Space closes them, because there's nothing to play yet.
+- **Rotation isn't applied.** Nothing sets the stored rotation yet. When something does, the viewer has to use it too.
 
 ### Copy and drag
 
 One shared command serves grid, list and viewer. The pasteboard carries file URLs and lazily generated image data, so paste works in Finder and in apps like Messages and Figma. Large selections stay instant. Videos carry file URLs only.
+
+- **One command.** A responder sits in the chain behind the window, so Copy reaches the browser wherever focus is, and text fields can still handle it first. The context menu uses the same command. It acts on the photo showing in the viewer, or else the selection, or else the current item.
+- **Instant means the main thread.** Command-C returns at once and clears the pasteboard, then the query and the write run elsewhere. All 27,235 real files take about 4 seconds to land, with no frame lost. A paste in that gap finds nothing, which beats pasting what was copied before, and the status bar says when a copy of 2,000 or more is on its way and done.
+- **Image data** is PNG and TIFF, made only when an app asks, for selections of up to 16. It's upright, tone mapped to SDR, and at most 4096 px, so that encoding fits the wait below. Anything taking the file gets the original.
+- **AppKit asks for promised data on the main thread** and waits there. So the read and encoding run elsewhere through the I/O scheduler, and the main thread waits for at most 4 seconds, which is enough for a sleeping drive to wake. The file URL stays either way.
+- **Promises at quit.** AppKit fills every promise when the app quits, on the main thread. Photon drops them instead, so after quitting the pasteboard keeps the file URLs and loses the pixels.
+- **Offline**, a photo has no URL, but up to 16 can still paste as their stored thumbnail. Past that they're left out. The status bar says so either way.
+
+**Dragging** starts from a selected tile, a selected list row or the photo in the viewer at fit, and offers copying only, so a drop can never move or delete an original. The files' URLs are fetched when the button goes down, because a drag has to start at once. A drag has at most 16 dragging items. AppKit walks them on worker threads, which is why `isFlipped` on a drag source must stay `nonisolated`: a main-actor getter crashes there, and only on large selections. The other files go straight onto the drag's pasteboard, off the main thread, so a drop in the first moments of a very large drag may carry only some of them.
 
 ### Keyboard navigation
 
@@ -201,7 +230,7 @@ Keyboard navigation is built alongside the grid, list and viewer, not added duri
 - Common actions appear in the menu bar with their shortcuts, so that they're discoverable.
 - Shortcuts are tested on non-US keyboard layouts.
 
-**Shortcuts.** Rows marked later have no effect yet: the viewer and copy are Milestone 3, favorites, search and the inspector are Milestone 5, and rename and trash need the file operations layer. The checks against Photos and Finder, and on non-US layouts, haven't been done.
+**Shortcuts.** Some rows have no effect yet: favorites, search and the inspector are Milestone 5, video is Milestone 6, and rename and trash need the file operations layer. Rotation has no milestone yet. The checks against Photos and Finder, and on non-US layouts, haven't been done.
 
 | Context | Key | Action |
 |---|---|---|
@@ -226,7 +255,8 @@ Keyboard navigation is built alongside the grid, list and viewer, not added duri
 | Everywhere | Ctrl-Cmd-F | Enter or leave full screen |
 | Viewer | Left, Right | Previous or next item, or pan when zoomed in |
 | Viewer | Up, Down | Pan when zoomed in |
-| Viewer | Escape | Close the viewer |
+| Viewer | Home, End | Go to the first or last item |
+| Viewer | Escape, Space, Cmd-Up | Close the viewer |
 | Viewer | Cmd-Equals, Cmd-Minus, Cmd-0 | Zoom in, zoom out, fit to window |
 | Video | Space | Play or pause |
 | Video | J, K, L | Reverse, pause, play forward |
@@ -234,7 +264,9 @@ Keyboard navigation is built alongside the grid, list and viewer, not added duri
 | Video | Option-Left, Option-Right | Step one frame |
 | Video | M | Mute |
 
-Space closes a photo in the viewer, so it works as a quick look toggle. For videos it plays and pauses, and Escape closes.
+Space closes a photo in the viewer, so it works as a quick look toggle. For videos it plays and pauses, and Escape closes. Until Milestone 6, Space closes a video too.
+
+The viewer also takes a pinch, a mouse wheel or a scroll with Command or Option held to zoom, the toolbar's zoom buttons, a double click or two-finger double tap to toggle actual size, dragging or a trackpad scroll to pan when zoomed in, and a two-finger swipe to the next photo at fit. Double-clicking a tile or row opens it. These need the mouse or trackpad, and everything they do has a key.
 
 ### Video
 
@@ -283,10 +315,12 @@ These are targets for an M4 Max. The figures below are from a release build on a
 | Launch to usable window with last session | About 350 ms | 320–345 ms to the result, 355–425 ms to the frame after it. The earlier target of 300 ms was arbitrary, so it was relaxed rather than replacing the SwiftUI shell |
 | Open an indexed 100k folder | Under 200 ms | 60–85 ms |
 | Scrolling and zooming | Steady 120 fps | 117.9–120 fps in the grid, which is at most 2 missed frames in a scenario. Instruments found 8–22 single-frame hitches in about 36 seconds in the larger window |
-| Main thread time per frame | Under 8 ms, so that a frame is never at risk | Worst p99 3.6 ms. Worst single frame 4.7 ms in the grid and 12.1 ms in the list |
+| Main thread time per frame | Under 8 ms, so that a frame is never at risk | Worst p99 3.6 ms. Worst single frame 4.7 ms in the grid and 12.1 ms in the list, measured at Milestone 2. Later runs reached 8.8 ms in the list and 7.0 ms in the viewer. The user accepted the list's 12.1 ms over budget by merging Milestone 2 |
 | Render server time per frame | Under 8 ms | p99 3.6–5.9 ms, worst 14.8 ms. 9 of 7,418 and 11 of 5,049 frames over budget |
-| Holding an arrow key in grid, list or viewer | Keeps up with key repeat, with no dropped frames | Grid and list keep up at 30 and 240 key events per second, and with Shift at 30. Viewer not yet |
-| App memory in normal use | Under 1.5 GB | About 460–600 MB after all the scenarios |
+| Holding an arrow key in grid, list or viewer | Keeps up with key repeat, with no dropped frames | Grid, list and viewer keep up at 30 and 240 key events per second, and grid and list with Shift at 30. The viewer loses at most 1 frame in a scenario |
+| App memory in normal use | Under 1.5 GB | About 460–600 MB after all the scenarios. 655 MB at most after viewer scenarios on real photos |
+| Open or close the viewer | No dropped frames in the transition | One frame lost as each begins, then the flight runs clean. See [Milestone 3 results](#milestone-3-results) |
+| Next photo sharp in the viewer | At once when preloaded | Under 0.3 ms preloaded. 95–145 ms typically and 254 ms at worst when not, from the T7 |
 
 The spike's in-app timers reported no missed frames in the same scenarios where Instruments found these hitches. Don't rely on the in-app numbers alone.
 
@@ -429,6 +463,64 @@ The tool was first validated on an exFAT disk image, and those numbers are in `S
 - **Why it works:** a self-signed certificate gives a designated requirement of bundle identifier plus certificate, which stayed identical across rebuilds. Ad-hoc signing gives a `cdhash` requirement, which changes on every build.
 - **Also confirmed:** `codesign` works with an untrusted certificate when given its SHA-1 hash and keychain, so CI doesn't need to trust it. Local builds ran, even though `spctl` rejects them.
 - **Testing note:** disk images aren't gated by TCC at all, so this check always needs a real drive.
+
+### Milestone 3 results
+
+These are from a release build, on AC power, with the window filling the display, on both displays at 120 Hz: an external 1x display and the Retina built-in display. The T7 Touch library is 27,235 assets, read from the drive mounted read-only, and the seeded library is 100,000 items with no original files, so its viewer shows thumbnails only. Figures are 1x then Retina.
+
+| Viewer scenario, T7 Touch | fps | Missed | Main thread p99 | Main thread worst |
+|---|---|---|---|---|
+| Open and close, 8 transitions | 101, 101 | 9, 10 | 0.8, 1.3 ms | 2.3, 2.1 ms |
+| Arrow keys, 30 per second | 117.5, 117.1 | 1, 1 | 0.7, 0.6 ms | 5.4, 7.0 ms |
+| Arrow keys, 240 per second | 118.1, 118.0 | 1, 1 | 0.2, 0.2 ms | 2.7, 2.2 ms |
+| One step every half second | 119.4, 119.4 | 1, 1 | 0.5, 0.4 ms | 5.7, 5.3 ms |
+| Jump of 50 every half second | 119.2, 119.2 | 3, 2 | 0.3, 0.3 ms | 1.5, 2.1 ms |
+| Zoom and pan | 118.2, 118.1 | 1, 1 | 0.4, 0.4 ms | 3.2, 2.8 ms |
+| Open and close from the list | 112.0, 114.0 | 4, 3 | 1.5, 1.2 ms | 2.6, 2.3 ms |
+
+The seeded library matched these or did better, with a worst viewer frame of 4.8 ms. Grid and list scenarios stayed at their Milestone 2 figures after this work: 119.3–120 fps, with worst frames of 5.4 ms in the grid and 8.8 ms in the list.
+
+| Time until a photo is sharp, from the T7 | Typical | Worst |
+|---|---|---|
+| Next photo, already preloaded | 0.05 ms | 0.24 ms |
+| Jump to a photo that isn't loaded, 1x | 143 ms | 201 ms |
+| Jump to a photo that isn't loaded, Retina | 95–116 ms | 254 ms |
+
+**Animation Hitches**, viewer scenarios on the T7, Retina, final code: 9 hitches in about 60 seconds. One was 67 ms during launch, and the other 8 were single frames. Render server p50 1.6 ms, p99 4.0 ms, worst 14.7 ms, and 19 of 7,780 frames over 8 ms. An earlier trace with the same flights showed a single-frame hitch as each transition began, which is the commit of the viewer's first frame and SwiftUI's update together. The in-app count of about one missed frame per transition agrees with that. Single frames at the start of a transition were left as they are.
+
+**Launch** is unchanged at 320–350 ms to the result and 355–390 ms to the frame after it, over 3 runs. One first run after a build took 469 ms. Opening a folder takes 24–87 ms.
+
+**HDR**, checked on the Retina built-in display with a gain-map HEIC made for the purpose, because no gain map turned up in 450 files sampled from the T7. The display's `maximumExtendedDynamicRangeColorComponentValue` read 4.0 with the HDR photo showing and 1.0 with an SDR photo or the grid, so extended range engages only when it should. That value shows the display's state, not the picture's accuracy, and no screenshot can show extended range.
+
+**Large selections**, all 27,235 real files: Command-C held 120 fps with no missed frame and a worst main-thread frame of 2.2 ms, and the files landed on the pasteboard in 4.0 seconds. A drag of all of them starts in 25 ms.
+
+What running it for real found, and fixed:
+
+- **The keyboard could be dead after launch**, until the first click. This was the cause of the `testArrowKeysMoveInTheGrid` failure seen once in Milestone 2. Focus was asked for once, a turn after the view was created, and that does nothing if the window isn't there yet. It reproduced in 2 of 12 runs, and in the same test in Shift-arrow form, and in 0 of 30 after moving it to when the view joins its window.
+- **`PHOTON_WINDOW` had the same race**, so a run could silently measure the wrong window size or display. Some early runs in this milestone did, and were thrown away. The JSON's `backingScale` is worth checking on every run.
+- **A drag of many files crashed.** AppKit walks large drags on worker threads, and Swift 6 traps a main-actor `isFlipped` there. No test with a small selection can see it.
+- **Unsigned builds started with `open`** read nothing from the T7, with no error. Measurements must be started from a shell, which is how Milestone 2's were.
+- Freeing large surfaces on the main thread cost frames of up to 10 ms. They're now released on the decoding queue.
+- Reading `isViewerOpen` in `BrowserShell` rebuilt the toolbar at the start of each transition, so it moved into small views of its own.
+- Screen-sized previews were scaled back down by the GPU, so they're now the size that fills the viewer.
+
+Tested on a real screen:
+
+- XCUITests, through the running app with real events, 14 of 14 before the zoom controls and title were added: opening with Space, Return and Command-Down, closing with Space, Escape and Command-Up, moving, zooming and panning from the keyboard, keeping the current item from grid and list, and Copy in tile, list and viewer. After those were added, the keyboard suite passed again without its Copy test, with a new test of the toolbar's zoom buttons and a Command-scroll. The Copy and file transfer tests weren't rerun.
+- Copy into another process: a file URL, then PNG and TIFF made on request.
+- Dragging from the grid into Finder: 24 files, byte for byte, which covers the files past the 16 dragging items. `FileTransferUITests` needs a small library of real files, so it's set up by hand, and its header says how.
+- Light and dark, by screenshot on the T7's real photos: fit, zoomed in, opened from the list, and a video's placeholder. The photo stays sharp at high zoom.
+
+Tested with no display: 356 Swift Testing tests, including real key events in a window that isn't shown, progressive loading on a read-only exFAT image, and pulling that image while viewing. A pinch and a scroll are called on the viewer directly.
+
+**Accepted:**
+
+- The list's worst frame of 12.1 ms on the seeded 100k library, measured at Milestone 2 against the 8 ms budget. The user accepted this by merging Milestone 2, and it's recorded here because the budget rules ask for an explicit decision. It happens during list scrolling, and p99 is about 1 ms.
+- Image data is limited to 4096 px, so a paste of pixels from a larger photo is smaller than the original. This limit was chosen without measuring encoding times, and may be too cautious. Finder and anything taking the file get the original.
+
+**Not verified:** how the transitions look frame by frame, because window capture lags them. They're measured, and the flight has been watched only by the user, if at all. Reduce Motion's fades. Pasting into Messages and Figma themselves, as opposed to another process reading the same pasteboard. Dragging from the list or the viewer, which share the grid's code but only their preparation is tested. Real HDR photos from a camera or phone, PQ and HLG files, and HDR on an external display. RAW files. Panoramas past the size limits on a real screen. VoiceOver itself, a real trackpad swipe, and non-US keyboard layouts. How the eased scroll zoom feels on a real mouse wheel, and the direction a real wheel zooms. A real trackpad pinch works, as checked by the user. Pulling a real drive while viewing, which belongs to Milestone 4's physical check. The drive pulled during a paste.
+
+**Not built:** the viewer has no way to explain missing permission. Videos don't play until Milestone 6, and rotation isn't applied.
 
 ### Milestone 2 results
 

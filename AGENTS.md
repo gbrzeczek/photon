@@ -36,6 +36,10 @@ The UI tests need an unlocked screen, so they aren't in CI:
 TEST_RUNNER_PHOTON_UITEST_LIBRARY=<file> xcodebuild test -project Photon.xcodeproj -scheme Photon -destination 'platform=macOS'
 ```
 
+Start measurements from a shell, not with `open`: an unsigned build started by Launch Services can't read a removable drive, and it fails quietly. Check `backingScale` in the output, which says which display a run really used.
+
+`PHOTON_VIEWER_ROW=<n>` opens the viewer on a row, for looking at it with `PHOTON_SNAPSHOT=<file>`. `FileTransferUITests` also needs `TEST_RUNNER_PHOTON_UITEST_FILES_LIBRARY` and `TEST_RUNNER_PHOTON_UITEST_DROP_FOLDER`, and its header explains them.
+
 `scan` refuses an external volume unless it's mounted read-only, and `generate` only writes to the internal disk or a disk image. Keep libraries built from a real drive out of this repository, because they contain real file names.
 
 The tests create and mount exFAT disk images with `hdiutil`, which works without a real drive.
@@ -75,7 +79,8 @@ The tests create and mount exFAT disk images with `hdiutil`, which works without
 - Tiles must show something immediately: the nearest thumbnail, or the stored dominant color.
 - The database has a single writer. Don't run unbounded queries on the main thread.
 - Keep to the budgets in [docs/PLAN.md](docs/PLAN.md#performance-budgets). A regression needs a fix or an explicit decision.
-- Don't read values that change often in `BrowserShell`'s body. That rebuilds the toolbar, so give them a small view of their own, as `StatusBar` and `TileSizeSlider` do.
+- Release large surfaces and buffers off the main thread. Freeing one can take milliseconds.
+- Don't read values that change often in `BrowserShell`'s body. That rebuilds the toolbar, so give them a small view of their own, as `StatusBar` and `SizeControl` do.
 
 ## Architecture boundaries
 
@@ -103,6 +108,7 @@ Use SwiftUI for the app shell and AppKit where large-scale performance or precis
 - Every schema change needs a migration, because user libraries must survive upgrades.
 - Features should work the same way in grid, list and viewer. Copy, for example, is one shared command.
 - Wrap third-party libraries behind Photon's own interfaces.
+- A view that starts a drag must keep `isFlipped` `nonisolated`. AppKit calls it on worker threads for large drags, and a main-actor getter crashes.
 
 ## Testing
 

@@ -7,10 +7,15 @@ import os
 /// Exists only to give `NSScrollView` a height and a scroller, and to take events. It has the same
 /// coordinates as the layout, so tiles are found with no conversion. No tile sits at these coordinates,
 /// which reach tens of millions of points.
-final class GridDocumentView: NSView {
+final class GridDocumentView: NSView, NSDraggingSource {
     weak var grid: TileGridView?
 
-    override var isFlipped: Bool { true }
+    func draggingSession(
+        _ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext
+    ) -> NSDragOperation { .copy }
+
+    /// AppKit can ask from a worker thread while it sets up a drag.
+    nonisolated override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
     override var canBecomeKeyView: Bool { true }
 
@@ -97,10 +102,14 @@ final class TileGridView: NSView, BrowserContent {
     private var press: (point: CGPoint, extending: Bool)?
     /// A plain click on a selected tile narrows the selection only when the button comes up.
     private var selectOnRelease: Int?
+    /// The tile whose photo is flying to or from the viewer.
+    private var hiddenAsset: Int64?
     private var band: RubberBand?
     /// Where the pointer is, in the window. Scrolling moves the band with no event of its own.
     private var bandPointer = CGPoint.zero
     private var lastBandFrame = ContinuousClock.now
+    /// Where a press on a selected tile began, which may turn into a file drag.
+    private var dragPress: CGPoint?
 
     /// Above this, tiles show their stored color, and nothing is decoded for tiles that won't stay.
     private static let fastScrollSpeed: CGFloat = 12_000
@@ -377,6 +386,7 @@ final class TileGridView: NSView, BrowserContent {
 
     private func recycle(_ tile: TileLayer, row: Int) {
         tile.isHidden = true
+        tile.opacity = 1
         tile.contents = nil
         tile.shownTier = nil
         tile.setBadge(nil, scale: 1)
@@ -407,6 +417,7 @@ final class TileGridView: NSView, BrowserContent {
         tile.assetID = asset
         tile.isVideo = result.flags[row].contains(.video)
         tile.backgroundColor = backgroundColor(row: row)
+        tile.opacity = asset == hiddenAsset ? 0 : 1
         setSelected(tile, showsSelected(row))
 
         if tile.isVideo {
@@ -620,6 +631,31 @@ final class TileGridView: NSView, BrowserContent {
     }
 
     func focus() { window?.makeFirstResponder(document) }
+
+    func tileRect(row: Int, in view: NSView) -> CGRect? {
+        guard row < result.count, !isHidden else { return nil }
+        let frame = tileLayout.frame(of: row)
+        guard frame.maxY > viewportTop, frame.minY < viewportTop + viewportHeight else { return nil }
+        return host.convert(frame.offsetBy(dx: 0, dy: -viewportTop), to: view)
+    }
+
+    func hideTile(row: Int?) {
+        withoutActions {
+            if let hiddenAsset { tilesByAsset[hiddenAsset]?.opacity = 1 }
+            hiddenAsset = row.map { result.assetIDs[$0] }
+            if let hiddenAsset { tilesByAsset[hiddenAsset]?.opacity = 0 }
+        }
+        // A thumbnail held back while the viewer was showing has somewhere to go now.
+        if row == nil { needsThumbnailRequests = true }
+        startTicking()
+    }
+
+    private func withoutActions(_ body: () -> Void) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        body()
+        CATransaction.commit()
+    }
     func thumbnailsReady() { startTicking() }
 
     func tileSizeDidChange() {
@@ -816,11 +852,18 @@ final class TileGridView: NSView, BrowserContent {
         window?.makeFirstResponder(document)
         cancelBand()
         selectOnRelease = nil
+        dragPress = nil
         let point = document.convert(event.locationInWindow, from: nil)
         let extending = !event.modifierFlags.isDisjoint(with: [.command, .shift])
         let row = tileLayout.index(at: point)
+        if event.clickCount == 2, !extending, row != nil {
+            press = nil
+            if let row, model.selection.currentRow != row { model.select(row: row) }
+            model.openViewer()
+            return
+        }
         // Tiles nearly fill the view, so a band can start on one. A selected tile is kept for dragging
-        // files out, which comes with Milestone 3.
+        // files out.
         let onSelected = row.map(model.selection.isSelected) == true
         press = onSelected ? nil : (point, extending)
         guard let row else {
@@ -830,6 +873,8 @@ final class TileGridView: NSView, BrowserContent {
         if onSelected, !extending {
             // A multiple selection has to survive this press, in case it's the start of a file drag.
             selectOnRelease = row
+            dragPress = point
+            model.prepareDrag()
             return
         }
         if event.modifierFlags.contains(.shift) {
@@ -845,6 +890,11 @@ final class TileGridView: NSView, BrowserContent {
         bandPointer = event.locationInWindow
         if band == nil {
             let point = document.convert(bandPointer, from: nil)
+            if let start = dragPress, hypot(point.x - start.x, point.y - start.y) >= RubberBand.startDistance,
+                beginFileDrag(event)
+            {
+                return
+            }
             if let row = selectOnRelease, tileLayout.index(at: point) != row { selectOnRelease = nil }
             guard let press, hypot(point.x - press.point.x, point.y - press.point.y) >= RubberBand.startDistance else {
                 return
@@ -854,8 +904,25 @@ final class TileGridView: NSView, BrowserContent {
         updateBand()
     }
 
+    /// Hands the press to AppKit's drag. Returns false until the files' URLs have arrived.
+    private func beginFileDrag(_ event: NSEvent) -> Bool {
+        let shown = tiles.keys.filter(model.selection.isSelected).sorted().prefix(FileDragController.shownItems)
+        let previews = shown.map { row -> FileDragController.Preview in
+            let tile = tiles[row]
+            return FileDragController.Preview(
+                row: row, frame: tileLayout.frame(of: row), contents: tile?.contents)
+        }
+        guard model.fileDrag.begin(from: document, event: event, previews: previews, formation: .pile) else {
+            return false
+        }
+        dragPress = nil
+        selectOnRelease = nil
+        return true
+    }
+
     func handleMouseUp(_ event: NSEvent) {
         press = nil
+        dragPress = nil
         if let row = selectOnRelease {
             selectOnRelease = nil
             model.select(row: row)
