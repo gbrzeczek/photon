@@ -108,7 +108,7 @@ final class TileGridView: NSView, BrowserContent {
     /// Where the pointer is, in the window. Scrolling moves the band with no event of its own.
     private var bandPointer = CGPoint.zero
     private var lastBandFrame = ContinuousClock.now
-    /// Where a press on a selected tile began, which may turn into a file drag.
+    /// Where a plain press on a tile began, which may turn into a file drag.
     private var dragPress: CGPoint?
 
     /// Above this, tiles show their stored color, and nothing is decoded for tiles that won't stay.
@@ -862,19 +862,11 @@ final class TileGridView: NSView, BrowserContent {
             model.openViewer()
             return
         }
-        // Tiles nearly fill the view, so a band can start on one. A selected tile is kept for dragging
-        // files out.
-        let onSelected = row.map(model.selection.isSelected) == true
-        press = onSelected ? nil : (point, extending)
+        // As in Finder, a plain press on a tile can drag it, and a band starts from the gaps. Tiles nearly
+        // fill the view, so Shift or Command starts a band on a tile too.
+        press = row == nil || extending ? (point, extending) : nil
         guard let row else {
             if !extending { model.selectNone() }
-            return
-        }
-        if onSelected, !extending {
-            // A multiple selection has to survive this press, in case it's the start of a file drag.
-            selectOnRelease = row
-            dragPress = point
-            model.prepareDrag()
             return
         }
         if event.modifierFlags.contains(.shift) {
@@ -882,7 +874,14 @@ final class TileGridView: NSView, BrowserContent {
         } else if event.modifierFlags.contains(.command) {
             model.toggle(row: row)
         } else {
-            model.select(row: row)
+            if model.selection.isSelected(row) {
+                // A multiple selection has to survive this press, in case it's the start of a file drag.
+                selectOnRelease = row
+            } else {
+                model.select(row: row)
+            }
+            dragPress = point
+            model.prepareDrag()
         }
     }
 

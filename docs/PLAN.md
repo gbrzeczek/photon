@@ -173,7 +173,7 @@ First-time indexing takes about 30 minutes per 100k photos at full speed, and ab
 - Accessibility, hit testing, selection, drag source, context menus and focus rings are hand-built, since `CALayer` provides none of them.
 - If capture dates arrive during a sort, the list re-sorts around the anchor so that the view doesn't jump. While indexing, the query runs at most every 2 seconds, and everything proportional to the library happens off the main thread: the query, the layout pass, and the map from old rows to new ones.
 - Selection is ranges of rows, so selecting 100k items costs one range. The map above carries it across a change of order.
-- **Rubber band.** Tiles nearly fill the view, so a band can start on any tile that isn't selected, and on the gaps. A selected tile is kept for dragging files out in Milestone 3, so a plain click on one narrows the selection only when the button comes up. Command or Shift keeps what was already selected. Holding the pointer past the top or bottom scrolls, faster the further past. Tiles on screen check the rectangle directly, and the rows are worked out once, off the main thread, when the button comes up, so a band over the whole library costs only what's visible on each frame. The status bar's count catches up then too.
+- **Rubber band.** As in Finder and Photos, a plain drag on a tile drags the file, selecting the tile first if it wasn't, and a plain drag from a gap draws a band. Tiles nearly fill the view, so Shift or Command starts a band on any tile too, and keeps what was already selected. A plain click on one of several selected tiles narrows the selection only when the button comes up, because the press could still be a drag. Holding the pointer past the top or bottom scrolls, faster the further past. Tiles on screen check the rectangle directly, and the rows are worked out once, off the main thread, when the button comes up, so a band over the whole library costs only what's visible on each frame. The status bar's count catches up then too.
 - **The list stays alive but idle while hidden.** A hidden `NSTableView` still lays out rows and makes cells, and that cost the grid hitches of up to 46 ms. It takes the result and the selection when it next shows.
 
 ### Viewer
@@ -506,12 +506,12 @@ What running it for real found, and fixed:
 
 Tested on a real screen:
 
-- XCUITests, through the running app with real events, 14 of 14 before the zoom controls and title were added: opening with Space, Return and Command-Down, closing with Space, Escape and Command-Up, moving, zooming and panning from the keyboard, keeping the current item from grid and list, and Copy in tile, list and viewer. After those were added, the keyboard suite passed again without its Copy test, with a new test of the toolbar's zoom buttons and a Command-scroll. The Copy and file transfer tests weren't rerun.
+- XCUITests, through the running app with real events, 14 of 14 before the zoom controls and title were added: opening with Space, Return and Command-Down, closing with Space, Escape and Command-Up, moving, zooming and panning from the keyboard, keeping the current item from grid and list, and Copy in tile, list and viewer. After those were added, the keyboard suite passed again without its Copy test, with a new test of the toolbar's zoom buttons and a Command-scroll. A plain drag of an unselected tile was then checked into a real Finder window, and one file landed. The Copy test and the drag of 24 selected files weren't rerun.
 - Copy into another process: a file URL, then PNG and TIFF made on request.
 - Dragging from the grid into Finder: 24 files, byte for byte, which covers the files past the 16 dragging items. `FileTransferUITests` needs a small library of real files, so it's set up by hand, and its header says how.
 - Light and dark, by screenshot on the T7's real photos: fit, zoomed in, opened from the list, and a video's placeholder. The photo stays sharp at high zoom.
 
-Tested with no display: 356 Swift Testing tests, including real key events in a window that isn't shown, progressive loading on a read-only exFAT image, and pulling that image while viewing. A pinch and a scroll are called on the viewer directly.
+Tested with no display: 359 Swift Testing tests, including real key events in a window that isn't shown, progressive loading on a read-only exFAT image, and pulling that image while viewing. A pinch and a scroll are called on the viewer directly.
 
 **Accepted:**
 

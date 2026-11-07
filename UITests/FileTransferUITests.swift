@@ -48,6 +48,20 @@ final class FileTransferUITests: XCTestCase {
         XCTAssertNotNil(NSImage(data: try XCTUnwrap(board.data(forType: .tiff))))
     }
 
+    func testDraggingAnUnselectedTileCopiesItIntoFinder() throws {
+        app.typeKey("a", modifierFlags: [.command, .shift])
+        let finder = XCUIApplication(bundleIdentifier: "com.apple.finder")
+        finder.activate()
+        let window = finder.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 5))
+        app.activate()
+        let start = tiles.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.1))
+        let end = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6))
+        start.click(forDuration: 0.5, thenDragTo: end)
+        let landed = expectation(for: NSPredicate { [weak self] _, _ in self?.dropped().count == 1 }, evaluatedWith: nil)
+        wait(for: [landed], timeout: 15)
+    }
+
     func testDraggingSelectedTilesCopiesThemIntoFinder() throws {
         app.typeKey("a", modifierFlags: .command)
         let finder = XCUIApplication(bundleIdentifier: "com.apple.finder")

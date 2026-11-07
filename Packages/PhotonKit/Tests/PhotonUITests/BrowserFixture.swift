@@ -168,6 +168,12 @@ final class BrowserFixture {
         return point
     }
 
+    /// Presses at a point in the window, tile or not, and holds.
+    func press(at point: CGPoint) {
+        grid.handleMouseDown(mouseEvent(.leftMouseDown, at: point))
+        flushFrame()
+    }
+
     func drag(to point: CGPoint) {
         grid.handleMouseDragged(mouseEvent(.leftMouseDragged, at: point))
         flushFrame()

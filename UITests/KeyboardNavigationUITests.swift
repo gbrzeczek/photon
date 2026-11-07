@@ -73,12 +73,14 @@ final class KeyboardNavigationUITests: XCTestCase {
         XCTAssertTrue(position.hasSuffix(" 0 selected"), position)
     }
 
-    func testDraggingSelectsARectangle() {
+    @MainActor func testCommandDraggingSelectsARectangle() {
         app.typeKey("a", modifierFlags: [.command, .shift])
         let start = tiles.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.2))
         let end = tiles.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.7))
         // On the Mac this has to be `click`. `press` compiles, but no event reaches the app.
-        start.click(forDuration: 0.1, thenDragTo: end)
+        XCUIElement.perform(withKeyModifiers: .command) {
+            start.click(forDuration: 0.1, thenDragTo: end)
+        }
         let expectation = expectation(
             for: NSPredicate { [weak self] _, _ in
                 guard let self else { return false }

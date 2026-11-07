@@ -15,13 +15,13 @@ struct RubberBandTests {
         try await body(fixture)
     }
 
-    @Test("Dragging from a tile selects the rectangle it crosses, not the rows between")
+    @Test("Command-dragging from a tile selects the rectangle it crosses, not the rows between")
     func rectangle() async throws {
         try await withBrowser { browser in
             let columns = browser.grid.tileLayout.columns
             #expect(columns >= 3)
             // Two columns by two rows, starting one column in.
-            _ = browser.press(row: 1)
+            _ = browser.press(row: 1, modifiers: .command)
             browser.drag(to: browser.windowPoint(row: columns + 2))
             #expect(browser.grid.isShowingBandForTesting)
             await browser.release(at: browser.windowPoint(row: columns + 2))
@@ -38,7 +38,7 @@ struct RubberBandTests {
     func live() async throws {
         try await withBrowser { browser in
             let columns = browser.grid.tileLayout.columns
-            _ = browser.press(row: 0)
+            _ = browser.press(row: 0, modifiers: .command)
             browser.drag(to: browser.windowPoint(row: columns + 1))
             #expect(browser.grid.showsSelectedForTesting(row: columns + 1) == true)
             browser.drag(to: browser.windowPoint(row: 1))
@@ -57,6 +57,46 @@ struct RubberBandTests {
             #expect(!browser.grid.isShowingBandForTesting)
             await browser.release(at: CGPoint(x: start.x + 2, y: start.y + 1))
             #expect(browser.selectedRows == IndexSet(integer: 5))
+        }
+    }
+
+    @Test("A plain drag from a tile selects it and draws no band, so it can become a file drag")
+    func plainDragOnATile() async throws {
+        try await withBrowser { browser in
+            browser.click(row: 2)
+            _ = browser.press(row: 5)
+            #expect(browser.selectedRows == IndexSet(integer: 5))
+            browser.drag(to: browser.windowPoint(row: 20))
+            #expect(!browser.grid.isShowingBandForTesting)
+            await browser.release(at: browser.windowPoint(row: 20))
+            #expect(browser.selectedRows == IndexSet(integer: 5))
+        }
+    }
+
+    @Test("A plain drag from the empty space after the last tile draws a band")
+    func plainDragFromAGap() async throws {
+        try await withBrowser(count: 2) { browser in
+            let layout = browser.grid.tileLayout
+            #expect(layout.columns >= 4)
+            let last = layout.frame(of: 1)
+            let empty = browser.grid.document.convert(CGPoint(x: last.maxX + last.width * 2, y: last.midY), to: nil)
+            browser.press(at: empty)
+            browser.drag(to: browser.windowPoint(row: 0))
+            #expect(browser.grid.isShowingBandForTesting)
+            await browser.release(at: browser.windowPoint(row: 0))
+            #expect(browser.selectedRows == IndexSet(integersIn: 0...1))
+        }
+    }
+
+    @Test("Shift or Command starts a band on a selected tile too")
+    func bandOnASelectedTile() async throws {
+        try await withBrowser { browser in
+            browser.click(row: 0)
+            _ = browser.press(row: 0, modifiers: .command)
+            browser.drag(to: browser.windowPoint(row: 2))
+            #expect(browser.grid.isShowingBandForTesting)
+            await browser.release(at: browser.windowPoint(row: 2))
+            #expect(browser.selectedRows == IndexSet(integersIn: 0...2))
         }
     }
 
@@ -103,7 +143,7 @@ struct RubberBandTests {
     func autoscroll() async throws {
         try await withBrowser(count: 2000) { browser in
             let columns = browser.grid.tileLayout.columns
-            _ = browser.press(row: 0)
+            _ = browser.press(row: 0, modifiers: .command)
             // Below the window. In window coordinates, up is positive.
             let below = CGPoint(x: browser.windowPoint(row: columns - 1).x, y: -100)
             browser.drag(to: below)
@@ -126,7 +166,7 @@ struct RubberBandTests {
     func aspect() async throws {
         try await withBrowser(aspect: true) { browser in
             let layout = browser.grid.tileLayout
-            _ = browser.press(row: 0)
+            _ = browser.press(row: 0, modifiers: .command)
             let next = layout.frame(of: 1)
             let end = browser.grid.document.convert(CGPoint(x: next.midX, y: next.midY), to: nil)
             browser.drag(to: end)
@@ -138,7 +178,7 @@ struct RubberBandTests {
     @Test("A key press while the rows are being worked out wins")
     func keyWins() async throws {
         try await withBrowser { browser in
-            _ = browser.press(row: 0)
+            _ = browser.press(row: 0, modifiers: .command)
             let end = browser.windowPoint(row: 3)
             browser.drag(to: end)
             browser.sendMouseUp(at: end)
