@@ -172,4 +172,8 @@ public enum LibraryError: Error, Equatable {
     /// The library was written by a newer Photon. Opening it could damage it.
     case newerLibrary
     case notFound
+    /// A tag or album name that's empty once trimmed.
+    case invalidName
+    /// Another tag already has this name, ignoring case.
+    case nameTaken
 }

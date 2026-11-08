@@ -52,6 +52,11 @@ public final class BrowseResult: Sendable {
         public init(rawValue: UInt8) { self.rawValue = rawValue }
         public static let video = Flags(rawValue: 1)
         public static let hasColor = Flags(rawValue: 2)
+        public static let favorite = Flags(rawValue: 4)
+        /// The cover of a collapsed Live Photo stack.
+        public static let livePhoto = Flags(rawValue: 8)
+        /// The cover of a collapsed RAW+JPEG stack.
+        public static let rawPair = Flags(rawValue: 16)
     }
 
     public let assetIDs: [Int64]
@@ -122,9 +127,9 @@ public struct BrowseFolder: Hashable, Sendable {
     }
 }
 
-/// The saved state of a folder's view, anchored to an asset and never to a pixel offset.
+/// The saved state of a source's view, anchored to an asset and never to a pixel offset.
 public struct BrowseSession: Hashable, Sendable {
-    public var scope: BrowseScope
+    public var source: BrowseSource
     public var sort: BrowseSort
     /// 0 for tiles, 1 for the list.
     public var viewMode: Int
@@ -137,11 +142,14 @@ public struct BrowseSession: Hashable, Sendable {
     public var current: AssetID?
     public var isViewerOpen: Bool
 
+    /// The folder, when the source is one.
+    public var scope: BrowseScope? { source.folder }
+
     public init(
-        scope: BrowseScope, sort: BrowseSort, viewMode: Int, tileSize: Double?, anchor: AssetID?,
+        source: BrowseSource, sort: BrowseSort, viewMode: Int, tileSize: Double?, anchor: AssetID?,
         anchorPosition: Double? = nil, current: AssetID? = nil, isViewerOpen: Bool = false
     ) {
-        self.scope = scope
+        self.source = source
         self.sort = sort
         self.viewMode = viewMode
         self.tileSize = tileSize
@@ -149,6 +157,15 @@ public struct BrowseSession: Hashable, Sendable {
         self.anchorPosition = anchorPosition
         self.current = current
         self.isViewerOpen = isViewerOpen
+    }
+
+    public init(
+        scope: BrowseScope, sort: BrowseSort, viewMode: Int, tileSize: Double?, anchor: AssetID?,
+        anchorPosition: Double? = nil, current: AssetID? = nil, isViewerOpen: Bool = false
+    ) {
+        self.init(
+            source: .folder(scope), sort: sort, viewMode: viewMode, tileSize: tileSize, anchor: anchor,
+            anchorPosition: anchorPosition, current: current, isViewerOpen: isViewerOpen)
     }
 }
 

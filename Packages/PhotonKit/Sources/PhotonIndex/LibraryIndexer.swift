@@ -63,6 +63,8 @@ public struct IndexReport: Hashable, Sendable {
     /// Files that hit an error during this run.
     public var failed = 0
     public var identity = IdentityCounts()
+    /// Stacks found or broken by the pairing stage.
+    public var pairing = PairingReport()
     public var scanSeconds = 0.0
     public var processSeconds = 0.0
     /// What this run read. `openHandles` is what was open when it ended.
@@ -220,6 +222,9 @@ public final class LibraryIndexer: Sendable {
             stageStart = clock.now
             try await processPending(session: session, report: &report, progress: progress)
             report.processSeconds = (clock.now - stageStart) / .seconds(1)
+
+            // Pairing reads only the library, and needs the hashes, so it comes last.
+            report.pairing = try await store.pairStacks(volume: session.volume)
         } catch is CancellationError {
             report.processSeconds = (clock.now - stageStart) / .seconds(1)
             report.outcome = .cancelled

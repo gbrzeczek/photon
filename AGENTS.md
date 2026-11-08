@@ -28,7 +28,7 @@ xcodebuild build -project Photon.xcodeproj -scheme Photon -destination 'platform
 swift run --package-path Packages/PhotonKit -c release photon-index scan <folder> --database <file>
 ```
 
-`photon-index thumbnails <folder> --database <file>` makes thumbnails for a scanned folder, and `photon-index seed --database <file> --count 100000` writes a library with no real files, for measuring the grid. Point the app at one with `PHOTON_LIBRARY=<file>`, so that nothing touches the real library. `PHOTON_PERF_OUT=<file>` runs the scripted scenarios and writes their timings. `PHOTON_WINDOW=main` or `builtin` fills that display first, because a small window hides most of the cost. Pair the timings with `xcrun xctrace record --template 'Animation Hitches'`, since in-app timers can't see the render server.
+`photon-index thumbnails <folder> --database <file>` makes thumbnails for a scanned folder, and `photon-index seed --database <file> --count 100000` writes a library with no real files, for measuring the grid. Point the app at one with `PHOTON_LIBRARY=<file>`, so that nothing touches the real library. `PHOTON_PERF_OUT=<file>` runs the scripted scenarios and writes their timings. `PHOTON_WINDOW=main` or `builtin` fills that display first, because a small window hides most of the cost. If the timings show a real problem, look closer with `xcrun xctrace record --template 'Animation Hitches'`, since in-app timers can't see the render server.
 
 The UI tests need an unlocked screen, so they aren't in CI:
 
@@ -82,7 +82,8 @@ The tests create and mount exFAT disk images with `hdiutil`, which works without
 - Grid and list code must not do work proportional to the size of the library on any frame.
 - Tiles must show something immediately: the nearest thumbnail, or the stored dominant color.
 - The database has a single writer. Don't run unbounded queries on the main thread.
-- Keep to the budgets in [docs/PLAN.md](docs/PLAN.md#performance-budgets). A regression needs a fix or an explicit decision.
+- Treat the budgets in [docs/PLAN.md](docs/PLAN.md#performance-budgets) as targets. Only a repeatable regression needs a fix or an explicit decision. An occasional single frame over 8 ms, or one launch a little over target, doesn't.
+- A milestone that touches the grid, list, viewer or launch gets one quick pass with `PHOTON_PERF_OUT` on the seeded 100k library. See [How milestones are measured](docs/PLAN.md#how-milestones-are-measured).
 - Release large surfaces and buffers off the main thread. Freeing one can take milliseconds.
 - Don't read values that change often in `BrowserShell`'s body. That rebuilds the toolbar, so give them a small view of their own, as `StatusBar` and `SizeControl` do.
 
