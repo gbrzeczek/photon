@@ -168,6 +168,9 @@ extension LibraryStore {
         try db.execute(
             sql: "UPDATE sessions SET anchor_asset_id = ? WHERE anchor_asset_id = ?",
             arguments: [target.rawValue, source.rawValue])
+        try db.execute(
+            sql: "UPDATE sessions SET current_asset_id = ? WHERE current_asset_id = ?",
+            arguments: [target.rawValue, source.rawValue])
         try moveThumbnails(from: source, to: target, db)
         // Cascades remove the source's own memberships, which were copied above.
         try db.execute(sql: "DELETE FROM assets WHERE id = ?", arguments: [source.rawValue])

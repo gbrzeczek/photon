@@ -141,3 +141,9 @@ func randomData(_ count: Int, seed: UInt64 = 1) -> Data {
     while data.count < count { withUnsafeBytes(of: generator.next()) { data.append(contentsOf: $0) } }
     return data.prefix(count)
 }
+
+enum LibraryStoreFixture {
+    static func make(in folder: TemporaryFolder) throws -> LibraryStore {
+        try LibraryStore(url: folder.url.appending(path: "Library.sqlite"))
+    }
+}

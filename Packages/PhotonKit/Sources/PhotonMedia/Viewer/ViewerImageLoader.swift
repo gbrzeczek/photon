@@ -111,6 +111,11 @@ public final class ViewerImageLoader {
         trim(keeping: keep)
     }
 
+    /// A volume came back, so what couldn't be read may be readable now. The next `focus` tries again.
+    public func retryUnavailable() {
+        for asset in entries.keys { entries[asset]?.unavailable = false }
+    }
+
     /// Lets go of everything, as when the viewer closes.
     public func reset() {
         for entry in entries.values { entry.task?.cancel() }

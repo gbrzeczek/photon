@@ -9,8 +9,8 @@ import Testing
 
 /// Indexing on real exFAT volumes through FSKit, the same driver as the T7 Touch, with no real drive
 /// anywhere near it. A forced detach shows what a process sees when a cable is pulled, though not a real
-/// failure's delays, so Milestone 4 still needs a physical test.
-@Suite("exFAT disk images", .serialized)
+/// failure's delays. No physical pull is ever part of testing: see docs/PLAN.md, Removable media checks.
+@Suite("exFAT disk images", .serialized, .usesDiskImages, .timeLimit(.minutes(10)))
 struct DiskImageTests {
     final class Fixture: Sendable {
         let directory: URL

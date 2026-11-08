@@ -43,11 +43,11 @@ public struct PhotonRootView: View {
         let url = launch.libraryURL
         do {
             let handle = try await Task.detached(priority: .userInitiated) { try BrowserLibrary.open(url: url) }.value
-            let library = BrowserLibrary(handle)
+            let library = BrowserLibrary(handle, ejectScope: launch.ejectScope)
             let model = BrowserModel(library: library)
             model.setLayoutMode(launch.layoutMode)
             // The last session comes first: it's what launch is measured by, and it needs no volumes.
-            let restored = await model.restoreLastSession()
+            let restored = await model.restoreLastSession(opensViewer: launch.restoresViewer)
             state = .ready(library, model)
             quitObserver = NotificationCenter.default.addObserver(
                 forName: NSApplication.willTerminateNotification, object: nil, queue: .main
@@ -58,7 +58,11 @@ public struct PhotonRootView: View {
                 }
             }
             await library.start()
-            if !restored { model.openFirstFolder() }
+            if restored {
+                model.leaveVanishedFolder()
+            } else {
+                model.openFirstFolder()
+            }
         } catch {
             state = .failed(error.localizedDescription)
         }
@@ -69,10 +73,22 @@ public struct PhotonRootView: View {
 struct LaunchSettings {
     var libraryURL: URL?
     var layoutMode = TileLayoutMode.square
+    /// Disk images only, unless nothing about this launch says it's a test or a measurement. Whoever
+    /// sets `PHOTON_LIBRARY` is running the app for a reason of their own, and a real drive mustn't be
+    /// within its reach.
+    var ejectScope = EjectScope.diskImagesOnly
+    /// Tests and measurements start from the grid, whatever the last run ended on.
+    var restoresViewer = true
 
     init(environment: [String: String] = ProcessInfo.processInfo.environment) {
         libraryURL = environment["PHOTON_LIBRARY"].map { URL(fileURLWithPath: $0) }
         if environment["PHOTON_LAYOUT"] == "aspect" { layoutMode = .aspect }
+        if environment["PHOTON_NO_VIEWER_RESTORE"] != nil || environment["PHOTON_PERF_OUT"] != nil {
+            restoresViewer = false
+        }
+        if !environment.keys.contains(where: { $0.hasPrefix("PHOTON_") || $0.hasPrefix("XCTest") }) {
+            ejectScope = .anyExternalVolume
+        }
     }
 }
 
@@ -160,9 +176,12 @@ private struct StatusBar: View {
 
     var body: some View {
         HStack {
+            VolumeBadge(model: model)
             Text(status)
             Spacer()
-            if let message = model.notice ?? library.lastError ?? (library.activity.isEmpty ? nil : library.activity) {
+            if let message = model.notice ?? library.lastError ?? library.volumeNotice
+                ?? (library.activity.isEmpty ? nil : library.activity)
+            {
                 Text(message).lineLimit(1)
             }
         }
@@ -180,6 +199,27 @@ private struct StatusBar: View {
         let noun = model.itemCount == 1 ? "item" : "items"
         return model.selectedCount > 0
             ? "\(model.selectedCount.formatted()) of \(items) selected" : "\(items) \(noun)"
+    }
+}
+
+/// Says when the folder showing can't do everything. A disconnected drive is a normal state, so this is
+/// quiet: everything but the original files keeps working.
+private struct VolumeBadge: View {
+    let model: BrowserModel
+
+    var body: some View {
+        if model.scope != nil {
+            switch model.scopeAccess {
+            case .offline:
+                Label("\(model.volumeName ?? "Volume") is offline", systemImage: "externaldrive.badge.xmark")
+                    .help("Browsing from stored thumbnails. Connect the drive to see the originals.")
+            case .readOnly:
+                Label("Read Only", systemImage: "lock")
+                    .help("This volume can't be changed, so Rename and Move to Trash aren't available.")
+            case .writable:
+                EmptyView()
+            }
+        }
     }
 }
 
@@ -288,9 +328,12 @@ private struct FolderSidebar: View {
         List(selection: selection) {
             Section("Folders") {
                 OutlineGroup(roots, children: \.children) { node in
-                    Label(node.name, systemImage: isOnline(node) ? "folder" : "externaldrive.badge.xmark")
+                    row(node)
                         .tag(node.scope)
                         .foregroundStyle(isOnline(node) ? .primary : .secondary)
+                        .contextMenu {
+                            if canEject(node) { Button(ejectTitle(node)) { library.eject(node.scope.volume) } }
+                        }
                 }
             }
         }
@@ -298,7 +341,27 @@ private struct FolderSidebar: View {
         .accessibilityIdentifier("photon.sidebar")
     }
 
+    private func row(_ node: FolderNode) -> some View {
+        HStack {
+            Label(node.name, systemImage: isOnline(node) ? "folder" : "externaldrive.badge.xmark")
+            Spacer()
+            if canEject(node) {
+                Button(ejectTitle(node), systemImage: "eject.fill") { library.eject(node.scope.volume) }
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help(ejectTitle(node))
+            }
+        }
+    }
+
     private func isOnline(_ node: FolderNode) -> Bool { library.onlineVolumes.contains(node.scope.volume) }
+
+    private func canEject(_ node: FolderNode) -> Bool {
+        node.isRoot && library.ejectableVolumes.contains(node.scope.volume)
+    }
+
+    private func ejectTitle(_ node: FolderNode) -> String { "Eject “\(library.name(of: node.scope.volume))”" }
 }
 
 /// The app's menus, with their shortcuts. Each one acts on the focused window's browser.
@@ -309,7 +372,17 @@ public struct PhotonCommands: Commands {
 
     private var isViewing: Bool { model?.isViewerOpen == true }
 
+    private var ejectTitle: String {
+        guard model?.canEjectVolume == true, let name = model?.volumeName else { return "Eject" }
+        return "Eject “\(name)”"
+    }
+
     public var body: some Commands {
+        CommandGroup(after: .newItem) {
+            Button(ejectTitle) { model?.ejectVolume() }
+                .keyboardShortcut("e", modifiers: .command)
+                .disabled(model?.canEjectVolume != true)
+        }
         CommandGroup(before: .toolbar) {
             Button("as Tiles") { model?.setViewMode(.tiles) }
                 .keyboardShortcut("1", modifiers: .command)

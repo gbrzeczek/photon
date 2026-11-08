@@ -90,9 +90,9 @@ func watchUnmount(path: String, closeOnWillUnmount: Bool) throws {
     exit(3)
 }
 
-/// For the physical drive pull. Reads in a loop until the drive disappears and reports how long
-/// the failing call blocked. A watchdog prints while a read is stuck, because a hung read is
-/// exactly what a disk image can't show.
+/// Reads in a loop until the volume disappears and reports how long the failing call blocked. A
+/// watchdog prints while a read is stuck. Use it on disk images only: a physical pull is no longer
+/// part of testing. See docs/PLAN.md, Removable media checks.
 func readUntilError(path: String) throws {
     let fd = open(path, O_RDONLY)
     guard fd >= 0 else { throw posix("open") }
@@ -110,7 +110,7 @@ func readUntilError(path: String) throws {
     var buffer = [UInt8](repeating: 0, count: 1 << 20)
     var offset: off_t = 0
     var worst = 0.0
-    log("READY: pull the cable or card now, Ctrl-C to stop")
+    log("READY: detach the disk image now, Ctrl-C to stop")
     while true {
         started = Date()
         let n = pread(fd, &buffer, buffer.count, offset)

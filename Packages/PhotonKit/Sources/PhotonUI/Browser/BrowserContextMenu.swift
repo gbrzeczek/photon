@@ -5,6 +5,7 @@ import AppKit
 enum BrowserContextMenu {
     static func make(model: BrowserModel) -> NSMenu {
         let menu = NSMenu()
+        menu.autoenablesItems = false
         let rows = model.isViewerOpen ? model.viewerRow.map { [$0] } ?? [] : Array(model.selection.rows.prefix(32))
         let target = MenuTarget(model: model, rows: rows)
         let copy = NSMenuItem(title: "Copy", action: #selector(MenuTarget.copyFiles), keyEquivalent: "")
@@ -15,6 +16,7 @@ enum BrowserContextMenu {
         show.target = target
         // The menu doesn't retain targets, so an item carries its own.
         show.representedObject = target
+        show.isEnabled = model.scopeAccess != .offline
         menu.addItem(show)
         return menu
     }

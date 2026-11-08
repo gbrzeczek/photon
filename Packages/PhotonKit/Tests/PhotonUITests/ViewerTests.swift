@@ -194,9 +194,9 @@ struct ViewerTests {
             browser.pressSpace()
             for _ in 0..<30 { browser.hold(.right) }
             #expect(browser.currentRow == 30)
-            #expect(browser.model.viewerStatus != "31 of 100")
+            #expect(!browser.model.viewerStatus.hasPrefix("31 of 100"))
             try await Task.sleep(for: .milliseconds(300))
-            #expect(browser.model.viewerStatus == "31 of 100")
+            #expect(browser.model.viewerStatus.hasPrefix("31 of 100"))
         }
     }
 
@@ -392,7 +392,7 @@ struct ViewerTests {
 }
 
 /// Real files on a read-only exFAT image, the closest thing to the real drive that runs with no hardware.
-@Suite("The viewer with real files", .serialized)
+@Suite("The viewer with real files", .serialized, .usesDiskImages)
 @MainActor
 struct ViewerFilesTests {
     @MainActor

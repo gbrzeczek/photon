@@ -35,6 +35,11 @@ public struct IndexOptions: Sendable {
     /// How long to wait for a `willUnmount` to turn into an unmount before resuming work.
     public var unmountGracePeriod: Duration = .seconds(5)
     public var concurrency = 4
+    /// Refuses a writable external volume, as `MountPolicy` describes. Tools leave this on. The app turns
+    /// it off, because Photon writes nothing to a drive and a normal external drive is mounted writable.
+    public var requiresReadOnlyExternal = true
+    /// Injected I/O failures, for tests.
+    public var faults: IOFaultInjector?
     public init() {}
 }
 
@@ -43,6 +48,9 @@ public enum IndexOutcome: String, Hashable, Sendable {
     case cancelled
     /// The volume went away during the run, which isn't an error. The next run resumes.
     case volumeOffline
+    /// Reads are failing and the volume can't be listed, though its mount is still there. No file is
+    /// blamed, and the next run resumes.
+    case volumeFailing
 }
 
 public struct IndexReport: Hashable, Sendable {
@@ -62,6 +70,22 @@ public struct IndexReport: Hashable, Sendable {
     public init() {}
 }
 
+/// One mounted volume that `connectKnownVolumes` looked at.
+public struct VolumeConnection: Hashable, Sendable {
+    public var volume: VolumeID
+    public var mount: MountedVolume
+    /// False if it was connected already. A newly connected volume wants a rescan.
+    public var isNew: Bool
+}
+
+/// What `connectKnownVolumes` found.
+public struct ConnectionReport: Hashable, Sendable {
+    public var connections: [VolumeConnection] = []
+    /// Names of clones mounted beside their originals, which stay out of the library this session.
+    public var duplicateNames: [String] = []
+    public init() {}
+}
+
 public enum IndexProgress: Sendable {
     case scanning(ScanReport)
     case processing(processed: Int)
@@ -77,6 +101,7 @@ public final class LibraryIndexer: Sendable {
     private let options: IndexOptions
     private let sessions = Mutex<[String: MountSession]>([:])
     private let observer: (@Sendable (String) -> Void)?
+    private let onChange = Mutex<(@Sendable () -> Void)?>(nil)
 
     private static let signposter = OSSignposter(subsystem: Signposts.subsystem, category: "Indexer")
 
@@ -89,6 +114,16 @@ public final class LibraryIndexer: Sendable {
         self.extractor = extractor
         self.options = options
         self.observer = observer
+    }
+
+    /// Called, on any thread, when a volume stops or starts being usable without a new mount: a
+    /// suspension, a refused unmount that lets work resume, or a mount found to be gone.
+    public func setChangeHandler(_ handler: @escaping @Sendable () -> Void) {
+        onChange.withLock { $0 = handler }
+    }
+
+    private func volumesChanged() {
+        onChange.withLock { $0 }?()
     }
 
     private final class MountSession: Sendable {
@@ -126,7 +161,7 @@ public final class LibraryIndexer: Sendable {
     private func index(
         mount: MountedVolume, roots: [String], progress: (@Sendable (IndexProgress) -> Void)?
     ) async throws -> IndexReport {
-        if let reason = MountPolicy.refusalReason(for: mount) { throw IndexingError.refused(reason) }
+        try checkPolicy(mount)
         try await ensureLibraryIsOff(mount)
 
         let session = try await session(for: mount)
@@ -144,6 +179,7 @@ public final class LibraryIndexer: Sendable {
             report.volumeID = session.volume
             report.isNewVolume = session.isNew
             report.io = session.scheduler.statistics.since(startingIO)
+            // A failing volume isn't retried here. Its mount is still there, so this would never end.
             guard report.outcome == .volumeOffline else { return report }
             // Either the unmount is real, or it was refused and `willUnmount` was a false alarm.
             while session.scheduler.isSuspended, await isMounted(session), !Task.isCancelled {
@@ -190,6 +226,9 @@ public final class LibraryIndexer: Sendable {
         } catch VolumeIOError.volumeUnavailable {
             report.processSeconds = (clock.now - stageStart) / .seconds(1)
             report.outcome = .volumeOffline
+        } catch let error as VolumeIOError where error.isDeviceFailure {
+            report.processSeconds = (clock.now - stageStart) / .seconds(1)
+            report.outcome = .volumeFailing
         }
         // Anything else, such as a full internal disk, is a real failure, and the caller should see it.
         return report
@@ -202,6 +241,8 @@ public final class LibraryIndexer: Sendable {
         /// The file changed or vanished since enumeration. It stays pending for the next rescan.
         case skipped
         case failed(FileInstanceID, String)
+        /// The device failed rather than the file, as far as anyone can tell yet.
+        case deviceFailure(FileInstanceID, VolumeIOError)
         /// Stop the run. This isn't about this file.
         case interrupted(any Error)
     }
@@ -229,6 +270,7 @@ public final class LibraryIndexer: Sendable {
             // Results that finished before an interruption are real work, so they're kept.
             var indexed: [IndexedFile] = []
             var interruption: (any Error)?
+            var deviceFailures: [(FileInstanceID, VolumeIOError)] = []
             for outcome in outcomes {
                 switch outcome {
                 case .indexed(let file):
@@ -238,8 +280,23 @@ public final class LibraryIndexer: Sendable {
                 case .failed(let id, let message):
                     report.failed += 1
                     try await store.recordIndexFailure(id, message: message, maxAttempts: options.maxAttempts)
+                case .deviceFailure(let id, let error):
+                    deviceFailures.append((id, error))
                 case .interrupted(let error):
                     interruption = interruption ?? error
+                }
+            }
+            // A whole batch failing looks like the drive, so the drive gets asked. If it can still list its
+            // root, the files really are bad. A single bad sector costs one file, not the run.
+            if let (_, error) = deviceFailures.first, indexed.isEmpty, interruption == nil,
+                await !canListRoot(session)
+            {
+                interruption = error
+            } else if interruption == nil {
+                for (id, error) in deviceFailures {
+                    report.failed += 1
+                    try await store.recordIndexFailure(
+                        id, message: String(describing: error), maxAttempts: options.maxAttempts)
                 }
             }
             let identity = try await store.applyIndexed(indexed)
@@ -252,6 +309,10 @@ public final class LibraryIndexer: Sendable {
             progress?(.processing(processed: report.processed))
             if let interruption { throw interruption }
         }
+    }
+
+    private func canListRoot(_ session: MountSession) async -> Bool {
+        (try? await session.scheduler.listDirectory("", priority: .userHash)) != nil
     }
 
     private func process(_ instance: FileInstance, session: MountSession) async -> FileOutcome {
@@ -280,6 +341,8 @@ public final class LibraryIndexer: Sendable {
             return .skipped
         } catch VolumeIOError.notFound {
             return .skipped
+        } catch let error as VolumeIOError where error.isDeviceFailure {
+            return .deviceFailure(instance.id, error)
         } catch {
             return .failed(instance.id, String(describing: error))
         }
@@ -294,43 +357,133 @@ public final class LibraryIndexer: Sendable {
     public func volumeWillUnmount(mountPoint: String) {
         guard let session = sessions.withLock({ $0[mountPoint] }) else { return }
         session.scheduler.suspend()
+        volumesChanged()
         let grace = options.unmountGracePeriod
         Task.detached(priority: .utility) { [self] in
             try? await Task.sleep(for: grace)
-            if session.mount.isStillMounted() {
+            // Checked away from the cooperative pool, because a dying drive can hold this.
+            let isMounted = await isMounted(session)
+            let isCurrent = sessions.withLock { $0[mountPoint] === session }
+            guard isCurrent else { return }
+            if isMounted {
                 session.scheduler.resume()
             } else {
                 sessions.withLock { if $0[mountPoint] === session { $0[mountPoint] = nil } }
             }
+            volumesChanged()
         }
     }
 
-    /// Call on `didUnmount`.
+    /// Call on `didUnmount`. A new volume may already be at this path, so only a mount that has really
+    /// gone is dropped.
     public func volumeDidUnmount(mountPoint: String) {
-        let session = sessions.withLock { $0.removeValue(forKey: mountPoint) }
-        session?.scheduler.suspend()
+        guard let session = sessions.withLock({ $0[mountPoint] }) else { return }
+        Task.detached(priority: .utility) { [self] in
+            guard await !isMounted(session) else { return }
+            session.scheduler.suspend()
+            drop(session, at: mountPoint)
+        }
+    }
+
+    /// The volume's mount point moved, which is what renaming a volume does. The old session can't reach
+    /// anything now, and the next connection makes a new one.
+    public func volumeDidRename(from oldMountPoint: String) {
+        guard let session = sessions.withLock({ $0[oldMountPoint] }) else { return }
+        session.scheduler.suspend()
+        drop(session, at: oldMountPoint)
+    }
+
+    private func drop(_ session: MountSession, at mountPoint: String) {
+        let removed = sessions.withLock { sessions in
+            guard sessions[mountPoint] === session else { return false }
+            sessions[mountPoint] = nil
+            return true
+        }
+        if removed { volumesChanged() }
+    }
+
+    // MARK: Eject
+
+    /// Ejects an online volume, as the user's command. Stops all Photon's work on the disk first and
+    /// waits for its handles to close, because an open handle blocks the unmount. If the eject fails,
+    /// the volume is still mounted and work resumes.
+    public func eject(_ volume: VolumeID, using ejector: VolumeEjector) async throws {
+        let found = sessions.withLock { sessions in
+            sessions.first { $0.value.volume == volume }
+        }
+        guard let (mountPoint, session) = found else { throw EjectError.notConnected }
+        if let reason = ejector.refusal(for: session.mount) { throw EjectError.refused(reason) }
+
+        // Other volumes on the same disk go with it.
+        let disk = session.mount.wholeDiskName
+        let affected = sessions.withLock { sessions in
+            sessions.filter { $0.value.mount.wholeDiskName == disk }
+        }
+        for sibling in affected.values { sibling.scheduler.suspend() }
+        volumesChanged()
+        for sibling in affected.values { _ = await sibling.scheduler.waitUntilIdle(timeout: .seconds(2)) }
+
+        do {
+            try await ejector.eject(session.mount)
+        } catch {
+            for sibling in affected.values { sibling.scheduler.resume() }
+            volumesChanged()
+            throw error
+        }
+        for (path, sibling) in affected { drop(sibling, at: path) }
+        drop(session, at: mountPoint)
+    }
+
+    /// The mounted volume behind an online volume.
+    public func mount(of volume: VolumeID) -> MountedVolume? {
+        sessions.withLock { sessions in
+            sessions.values.first { $0.volume == volume }?.mount
+        }
+    }
+
+    /// What can be done with a volume's files now. Suspended counts as offline, because nothing can be
+    /// read until the unmount has settled either way.
+    public func access(to volume: VolumeID) -> VolumeAccess {
+        sessions.withLock { sessions in
+            guard let session = sessions.values.first(where: { $0.volume == volume && !$0.scheduler.isSuspended })
+            else { return .offline }
+            return session.mount.isReadOnly ? .readOnly : .writable
+        }
     }
 
     /// Connects a mounted volume without scanning it, so that its files can be read.
     /// The same rules as indexing apply: a refused mount stays unconnected.
     @discardableResult
     public func connect(mount: MountedVolume) async throws -> VolumeID {
-        if let reason = MountPolicy.refusalReason(for: mount) { throw IndexingError.refused(reason) }
+        try checkPolicy(mount)
         try await ensureLibraryIsOff(mount)
         return try await session(for: mount).volume
     }
 
+    private func checkPolicy(_ mount: MountedVolume) throws {
+        guard options.requiresReadOnlyExternal, let reason = MountPolicy.refusalReason(for: mount) else { return }
+        throw IndexingError.refused(reason)
+    }
+
     /// Connects every mounted volume the library already knows. Each one reads only what's needed to
     /// recognize it, and a volume that can't be connected is skipped: it just stays offline.
-    public func connectKnownVolumes() async throws -> [VolumeID] {
+    public func connectKnownVolumes() async throws -> ConnectionReport {
+        var report = ConnectionReport()
         let known = Set(try await store.allVolumes().map(\.uuid))
-        guard !known.isEmpty else { return [] }
+        guard !known.isEmpty else { return report }
         let mounted = try await onIOThread { MountedVolume.all() }
-        var connected: [VolumeID] = []
         for mount in mounted where known.contains(mount.uuid) {
-            if let volume = try? await connect(mount: mount) { connected.append(volume) }
+            let wasConnected = sessions.withLock { $0[mount.mountPoint]?.mount == mount }
+            do {
+                let volume = try await connect(mount: mount)
+                report.connections.append(VolumeConnection(volume: volume, mount: mount, isNew: !wasConnected))
+            } catch IndexingError.duplicateVolume {
+                report.duplicateNames.append(mount.name)
+            } catch {
+                // It stays offline.
+            }
         }
-        return connected
+        return report
     }
 
     /// The scheduler for an online volume, or nil when it's offline. All reads of its files go through this.
@@ -345,9 +498,11 @@ public final class LibraryIndexer: Sendable {
         scheduler(for: volume)?.mountPoint
     }
 
-    /// Volumes in use this session, by mount point.
+    /// Volumes that can be read right now, by mount point. A suspended one isn't among them.
     public func onlineVolumes() -> [String: VolumeID] {
-        sessions.withLock { $0.mapValues(\.volume) }
+        sessions.withLock { sessions in
+            sessions.filter { !$0.value.scheduler.isSuspended }.mapValues(\.volume)
+        }
     }
 
     private func session(for mount: MountedVolume) async throws -> MountSession {
@@ -362,9 +517,11 @@ public final class LibraryIndexer: Sendable {
         }
         if let existing = live[mount.mountPoint], existing.mount == mount { return existing }
 
+        let mountPoint = mount.mountPoint
         let scheduler = VolumeIOScheduler(
-            mountPoint: mount.mountPoint, concurrency: options.concurrency,
-            isAvailable: { mount.isStillMounted() }, observer: observer)
+            mountPoint: mountPoint, concurrency: options.concurrency,
+            isAvailable: { mount.isStillMounted() }, observer: observer,
+            onLost: { [weak self] in self?.mountWasLost(mountPoint) }, faults: options.faults)
         let resolver = VolumeResolver(store: store)
         let online = Set(live.values.map(\.volume))
         switch try await resolver.resolve(mount, scheduler: scheduler, online: online) {
@@ -372,9 +529,23 @@ public final class LibraryIndexer: Sendable {
             throw IndexingError.duplicateVolume(volume)
         case .online(let volume, let isNew):
             let session = MountSession(mount: mount, scheduler: scheduler, volume: volume.id, isNew: isNew)
-            sessions.withLock { $0[mount.mountPoint] = session }
-            return session
+            // Two connections can get here together: a mount event and Add Folder, say.
+            let installed: MountSession? = sessions.withLock { sessions in
+                if let existing = sessions[mount.mountPoint], existing.mount == mount { return existing }
+                if sessions.values.contains(where: { $0.volume == volume.id }) { return nil }
+                sessions[mount.mountPoint] = session
+                return session
+            }
+            guard let installed else { throw IndexingError.duplicateVolume(volume.id) }
+            return installed
         }
+    }
+
+    /// A job found the mount gone, and no notification may ever arrive for it.
+    private func mountWasLost(_ mountPoint: String) {
+        guard let session = sessions.withLock({ $0[mountPoint] }) else { return }
+        session.scheduler.suspend()
+        drop(session, at: mountPoint)
     }
 
     /// Photon's own files must never land on a user's drive.

@@ -20,6 +20,9 @@ final class FileDragController {
     private var rows = IndexSet()
     private var files: [CopiedFile]?
     private var task: Task<Void, Never>?
+    private var hasReportedOffline = false
+    /// A drag started on files that are all offline. Called once per selection.
+    var onOfflineDrag: (() -> Void)?
 
     /// Fetches the files for `rows`, once. Runs while the button is down, ahead of the drag.
     func prepare(rows: IndexSet, fetch: @escaping @Sendable () async -> [CopiedFile]) {
@@ -27,6 +30,7 @@ final class FileDragController {
         task?.cancel()
         self.rows = rows
         files = nil
+        hasReportedOffline = false
         task = Task.detached(priority: .userInitiated) { [weak self] in
             let found = await fetch()
             guard !Task.isCancelled else { return }
@@ -39,6 +43,8 @@ final class FileDragController {
         files = found
         task = nil
     }
+
+    var hasFilesForTesting: Bool { files != nil }
 
     /// The URL for a row of the prepared selection, for the list, which asks row by row. Nil for an
     /// offline file, or if the URLs aren't here yet, and then there's nothing to drag for that row.
@@ -65,6 +71,10 @@ final class FileDragController {
     ) -> Bool {
         guard let files else { return false }
         let urls = files.compactMap(\.url)
+        if urls.isEmpty, !files.isEmpty, !hasReportedOffline {
+            hasReportedOffline = true
+            onOfflineDrag?()
+        }
         guard !urls.isEmpty, let first = previews.first else { return false }
         let items = files.prefix(Self.shownItems).compactMap(\.url).enumerated().map { index, url in
             let item = NSDraggingItem(pasteboardWriter: url as NSURL)

@@ -318,6 +318,22 @@ final class BrowserListView: NSView, BrowserContent, NSTableViewDataSource, NSTa
     func tileSizeDidChange() {}
     func steppedTileSize(from size: CGFloat, larger: Bool) -> CGFloat { size }
     func thumbnailsReady() { requestTick() }
+
+    var anchorViewportHeight: CGFloat { table.visibleRect.height }
+
+    func retryThumbnails() {
+        guard isShowing else { return }
+        let rows = table.rows(in: table.visibleRect)
+        for row in rows.lowerBound..<rows.upperBound where row < result.count && !result.flags[row].contains(.video) {
+            let asset = AssetID(rawValue: result.assetIDs[row])
+            guard loader.cache.nearest(asset: asset, wanted: .small) == nil else { continue }
+            loader.request(
+                ThumbnailRequest(
+                    asset: asset, instance: FileInstanceID(rawValue: result.instanceIDs[row]), wanted: .small,
+                    priority: .visible))
+        }
+        requestTick()
+    }
     func layoutModeDidChange() {}
     func focusChanged() {}
 

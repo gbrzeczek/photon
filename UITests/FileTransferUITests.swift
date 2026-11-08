@@ -17,6 +17,7 @@ final class FileTransferUITests: XCTestCase {
         dropFolder = URL(fileURLWithPath: try XCTUnwrap(environment["PHOTON_UITEST_DROP_FOLDER"]))
         app = XCUIApplication()
         app.launchEnvironment["PHOTON_LIBRARY"] = library
+        app.launchEnvironment["PHOTON_NO_VIEWER_RESTORE"] = "1"
         app.launchEnvironment["PHOTON_WINDOW"] = "left"
         app.launch()
         app.typeKey("1", modifierFlags: .command)

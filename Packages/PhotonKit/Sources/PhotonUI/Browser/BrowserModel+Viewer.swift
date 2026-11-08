@@ -15,6 +15,7 @@ extension BrowserModel: ViewerHost {
         if selection.currentRow == nil { select(row: row) }
         isViewerOpen = true
         viewer?.open(row: row)
+        saveSessionSoon()
     }
 
     public func closeViewer(animated: Bool = true) {
@@ -64,6 +65,8 @@ extension BrowserModel: ViewerHost {
 
     var viewerRow: Int? { selection.currentRow }
     var viewerResult: BrowseResult { result }
+
+    var viewerWaitingText: String { "Waiting for \(volumeName ?? "the drive")…" }
 
     func viewerRect(row: Int) -> CGRect? { viewer.flatMap { active?.tileRect(row: row, in: $0) } }
     func viewerHideTile(row: Int?) { active?.hideTile(row: row) }
@@ -144,7 +147,7 @@ extension BrowserModel: ViewerHost {
                 ? "\(names) offline, so only a thumbnail was copied." : "\(names) offline and weren't copied.")
     }
 
-    private func setNotice(_ text: String, clears: Bool = true) {
+    func setNotice(_ text: String, clears: Bool = true) {
         notice = text
         noticeTask?.cancel()
         guard clears else { return }
@@ -162,6 +165,7 @@ extension BrowserModel: ViewerHost {
         let result = result
         let store = library.store
         let indexer = library.indexer
+        fileDrag.onOfflineDrag = { [weak self] in self?.setNotice("Offline items can't be dragged.") }
         fileDrag.prepare(rows: rows) {
             await Self.files(rows: rows, result: result, store: store, indexer: indexer)
         }

@@ -29,6 +29,8 @@ protocol ViewerHost: AnyObject {
     func viewerBeginDrag(event: NSEvent, frame: CGRect, contents: Any?)
     func viewerPrepareDrag()
     func viewerSwipe(_ direction: Int)
+    /// What the status bar says while a slow read is under way.
+    var viewerWaitingText: String { get }
 }
 
 /// The photo viewer: an overlay above the grid and list, which stay alive underneath.
@@ -62,6 +64,10 @@ final class ViewerView: NSView, NSDraggingSource {
     private var neighborDirection = 1
     private var settleTask: Task<Void, Never>?
     private var fullTask: Task<Void, Never>?
+    private var waitTask: Task<Void, Never>?
+    private var isWaitingLong = false
+    /// How long a read can take before it's worth saying so.
+    private static let waitDelay: Duration = .seconds(1)
     private var pan: (start: CGPoint, last: CGPoint)?
     private var dragPress: CGPoint?
     private var scrollSwipe: CGFloat = 0
@@ -457,6 +463,8 @@ final class ViewerView: NSView, NSDraggingSource {
 
     /// The key has come to rest, so this photo and its neighbors can have the disk.
     private func settled() {
+        isWaitingLong = false
+        startWaitingForDisk()
         host?.viewerStatusDidChange(statusText)
         host?.viewerDidSettle(row: row)
         requestImages(wantsFull: false)
@@ -465,6 +473,32 @@ final class ViewerView: NSView, NSDraggingSource {
             guard !Task.isCancelled else { return }
             self?.requestImages(wantsFull: true)
         }
+    }
+
+    /// A sleeping drive can take seconds to wake, and the photo stays on its thumbnail meanwhile. The
+    /// status bar says why, but only once the wait is long enough to notice.
+    private func startWaitingForDisk() {
+        waitTask?.cancel()
+        waitTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.waitDelay)
+            while !Task.isCancelled, let self, self.isOpen, let asset = self.item?.asset {
+                let isWaiting = self.images.isLoading(asset) && self.shownTier < .preview
+                if isWaiting != self.isWaitingLong {
+                    self.isWaitingLong = isWaiting
+                    self.applyStatus()
+                }
+                if !isWaiting { return }
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+        }
+    }
+
+    /// A volume came or went. The picture stays either way, and anything sharper that couldn't be read
+    /// gets another try.
+    func volumesDidChange() {
+        guard isOpen else { return }
+        images.retryUnavailable()
+        settled()
     }
 
     private func viewerItem(row: Int, in result: BrowseResult) -> ViewerItem {
@@ -586,6 +620,7 @@ final class ViewerView: NSView, NSDraggingSource {
         guard let host else { return "" }
         let position = "\(row + 1) of \(host.viewerResult.count)"
         if isVideo { return "\(position)  ·  \(TileArtwork.format(Int(host.viewerResult.durations[row])))" }
+        if isWaitingLong { return "\(position)  ·  \(host.viewerWaitingText)" }
         guard !isVideo, geometry.imageSize != .zero, shownTier >= .preview else { return position }
         let found = item.map { images.images(for: $0.asset) }
         let image = found?.full ?? found?.preview

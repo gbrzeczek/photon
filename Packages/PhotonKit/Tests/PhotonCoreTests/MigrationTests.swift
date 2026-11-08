@@ -47,9 +47,43 @@ struct MigrationTests {
     }
 
     @Test("The v2 schema matches its snapshot")
-    func schemaSnapshotV2() async throws {
+    func schemaSnapshotV2() throws {
+        let queue = try DatabaseQueue()
+        try LibraryMigrations.migrator.migrate(queue, upTo: "v2")
+        let schema = try queue.read { try String.fetchAll($0, sql: Self.schemaSQL).joined(separator: ";\n\n") + ";\n" }
+        #expect(schema == (try snapshot("schema-v2")), "Add a migration instead of editing v2.")
+    }
+
+    @Test("The v3 schema matches its snapshot")
+    func schemaSnapshotV3() async throws {
         let store = try LibraryStore(url: temporaryURL())
-        #expect(try await schema(store) == (try snapshot("schema-v2")), "Add a migration instead of editing v2.")
+        #expect(try await schema(store) == (try snapshot("schema-v3")), "Add a migration instead of editing v3.")
+    }
+
+    @Test("A v2 library upgrades in place, and its sessions keep their anchors")
+    func upgradeFromV2() async throws {
+        let url = temporaryURL()
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        do {
+            let queue = try DatabaseQueue(path: url.path)
+            try LibraryMigrations.migrator.migrate(queue, upTo: "v2")
+            try await queue.write { db in
+                try db.execute(
+                    sql: """
+                        INSERT INTO volumes (id, uuid, name, first_seen_at, last_seen_at) VALUES (1, 'U', 'Drive', 0, 0);
+                        INSERT INTO assets (id, kind, created_at) VALUES (7, 1, 0);
+                        INSERT INTO sessions (volume_id, relative_path, sort_key, anchor_asset_id, updated_at)
+                        VALUES (1, 'Photos', 'date', 7, 1);
+                        """)
+            }
+        }
+        let store = try LibraryStore(url: url)
+        let session = try #require(try await store.latestSession())
+        #expect(session.scope.path == "Photos")
+        #expect(session.anchor == AssetID(rawValue: 7))
+        #expect(session.current == AssetID(rawValue: 7))
+        #expect(session.anchorPosition == nil)
+        #expect(!session.isViewerOpen)
     }
 
     @Test("A v1 library upgrades in place and keeps its assets, with thumbnails still to make")

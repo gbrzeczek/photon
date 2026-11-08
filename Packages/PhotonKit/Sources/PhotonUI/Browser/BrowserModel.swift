@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import Observation
 import PhotonCore
+import PhotonIndex
 import PhotonMedia
 import os
 
@@ -21,6 +22,16 @@ struct ViewAnchor: Equatable {
     var screenY: CGFloat
 }
 
+/// Where a saved session asks a new result to land.
+struct RestoredPlace: Sendable {
+    var anchor: AssetID?
+    var anchorPosition: Double?
+    var current: AssetID?
+    /// Filled in once the rows are known.
+    var anchorRow: Int?
+    var currentRow: Int?
+}
+
 /// What the grid and the list both do. One of them is showing at a time, and the other stays alive.
 @MainActor
 protocol BrowserContent: AnyObject {
@@ -34,6 +45,10 @@ protocol BrowserContent: AnyObject {
     func row(after move: BrowserMove, from row: Int) -> Int?
     /// Takes keyboard focus.
     func focus()
+    /// How tall the view is, for placing a restored anchor.
+    var anchorViewportHeight: CGFloat { get }
+    /// Asks again for what's on screen, because a volume came back.
+    func retryThumbnails()
     func tileSizeDidChange()
     /// The size one step on from `size`.
     func steppedTileSize(from size: CGFloat, larger: Bool) -> CGFloat
@@ -84,6 +99,8 @@ public final class BrowserModel {
     @ObservationIgnored private var reloadTask: Task<Void, Never>?
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var saveTask: Task<Void, Never>?
+    /// The restored session had the viewer open, so it opens again once its result lands.
+    @ObservationIgnored private var opensViewerOnResult = false
     @ObservationIgnored private var lastContentReload = ContinuousClock.now
     @ObservationIgnored private var pendingContentReload: Task<Void, Never>?
     @ObservationIgnored private var typedName = ""
@@ -101,6 +118,8 @@ public final class BrowserModel {
         self.library = library
         pages = RowPageCache(store: library.store)
         library.onContentChanged = { [weak self] in self?.contentChanged() }
+        library.onVolumesChanged = { [weak self] in self?.volumesChanged() }
+        library.onNotice = { [weak self] in self?.setNotice($0) }
         library.loader.setFinishedHandler { [weak self] in
             DispatchQueue.main.async {
                 self?.active?.thumbnailsReady()
@@ -131,15 +150,24 @@ public final class BrowserModel {
     /// Takes on a session and starts its query. Launch does this before building the window, so that the
     /// window is right the first time, and launch costs the longer of the query and the window, not both.
     /// Returns false if there's no session.
-    func restore(_ session: BrowseSession?) -> Bool {
+    func restore(_ session: BrowseSession?, opensViewer: Bool = true) -> Bool {
         guard let session else { return false }
+        opensViewerOnResult = opensViewer && session.isViewerOpen
         apply(session)
         return true
     }
 
     /// Reopens the folder used last. Returns false if there's no saved session.
-    public func restoreLastSession() async -> Bool {
-        restore(try? await library.store.latestSession())
+    public func restoreLastSession(opensViewer: Bool = true) async -> Bool {
+        restore(try? await library.store.latestSession(), opensViewer: opensViewer)
+    }
+
+    /// The saved folder may have gone while the app was closed, and an empty view isn't a useful place
+    /// to come back to. An offline folder is still in the library, so it stays.
+    public func leaveVanishedFolder() {
+        guard let scope, !library.folders.isEmpty else { return }
+        let exists = library.folders.contains { $0.volume == scope.volume && $0.path == scope.path }
+        if !exists { openFirstFolder() }
     }
 
     public func openFirstFolder() {
@@ -170,7 +198,10 @@ public final class BrowserModel {
         showMode?(viewMode)
         if let size = session.tileSize { tileSize = size }
         selection.reset()
-        reload(keepPosition: false, restoring: session.anchor)
+        reload(
+            keepPosition: false,
+            restoring: RestoredPlace(
+                anchor: session.anchor, anchorPosition: session.anchorPosition, current: session.current))
     }
 
     /// Goes to the enclosing folder, up to the root. Command-Up.
@@ -194,7 +225,7 @@ public final class BrowserModel {
 
     /// Runs the query and the layout pass off the main thread, then installs them together, keeping
     /// the anchor where it is. Nothing main-thread here grows with the library.
-    func reload(keepPosition: Bool, restoring anchorAsset: AssetID? = nil) {
+    func reload(keepPosition: Bool, restoring place: RestoredPlace? = nil) {
         guard let scope else { return }
         generation += 1
         let generation = generation
@@ -221,16 +252,18 @@ public final class BrowserModel {
                 : nil
             let map = base.count > 0 ? base.rowMap(to: result) : []
             let selected = SelectionModel.remapped(baseRows, map: map)
-            let wanted = anchorAsset.flatMap { result.row(of: $0) }
+            var found = place
+            found?.anchorRow = place?.anchor.flatMap { result.row(of: $0) }
+            found?.currentRow = place?.current.flatMap { result.row(of: $0) }
             await self?.install(
                 result, generation: generation, prefix: prefix, rows: rows, map: map, selected: selected,
-                selectionVersion: baseVersion, wantedRow: wanted, keepPosition: keepPosition)
+                selectionVersion: baseVersion, place: found, keepPosition: keepPosition)
         }
     }
 
     private func install(
         _ next: BrowseResult, generation: Int, prefix: [Double], rows: AspectRows?, map: [Int32],
-        selected: IndexSet, selectionVersion: Int, wantedRow: Int?, keepPosition: Bool
+        selected: IndexSet, selectionVersion: Int, place: RestoredPlace?, keepPosition: Bool
     ) {
         guard generation == self.generation else { return }
         guard hasLaidOutContent else {
@@ -239,7 +272,7 @@ public final class BrowserModel {
             pendingInstall = { [weak self] in
                 self?.install(
                     next, generation: generation, prefix: prefix, rows: rows, map: map, selected: selected,
-                    selectionVersion: selectionVersion, wantedRow: wantedRow, keepPosition: keepPosition)
+                    selectionVersion: selectionVersion, place: place, keepPosition: keepPosition)
             }
             return
         }
@@ -256,14 +289,17 @@ public final class BrowserModel {
             nextSelected = SelectionModel.remapped(selection.rows, map: map)
         }
         var current: Int?
-        if let wantedRow {
-            current = wantedRow
+        if let row = place?.currentRow {
+            current = row
+            nextSelected = IndexSet(integer: row)
         } else if keepPosition, let row = selection.currentRow {
             current = Self.survivor(of: row, map: map)
         }
-        if wantedRow != nil { nextSelected = current.map { IndexSet(integer: $0) } ?? IndexSet() }
         let asset = current.map { AssetID(rawValue: next.assetIDs[$0]) }
-        if !keepPosition, let wantedRow { anchor = ViewAnchor(row: wantedRow, screenY: 120) }
+        if !keepPosition, let row = place?.anchorRow ?? place?.currentRow {
+            let height = active?.anchorViewportHeight ?? 0
+            anchor = ViewAnchor(row: row, screenY: CGFloat(place?.anchorPosition ?? 0.25) * height)
+        }
 
         result = next
         itemCount = next.count
@@ -275,6 +311,11 @@ public final class BrowserModel {
         isLoading = false
         if isViewerOpen {
             if next.count == 0 { closeViewer(animated: false) } else { viewer?.resultDidChange() }
+        }
+        if opensViewerOnResult {
+            opensViewerOnResult = false
+            // After this pass, once the tile it flies from is on screen.
+            if current != nil { DispatchQueue.main.async { [weak self] in self?.openViewer() } }
         }
         onResult?(next.count)
     }
@@ -304,6 +345,32 @@ public final class BrowserModel {
             lastContentReload = .now
             reload(keepPosition: true)
         }
+    }
+
+    /// The rows are the same, but what can be read isn't. A volume coming back should fill in what
+    /// couldn't be read, without moving anything.
+    private func volumesChanged() {
+        guard scope != nil else {
+            openFirstFolder()
+            return
+        }
+        active?.retryThumbnails()
+        viewer?.volumesDidChange()
+    }
+
+    /// What can be done with the files showing now.
+    public var scopeAccess: VolumeAccess {
+        scope.flatMap { library.volumeAccess[$0.volume] } ?? .offline
+    }
+
+    /// The name of the volume showing now.
+    public var volumeName: String? { scope.map { library.name(of: $0.volume) } }
+
+    public var canEjectVolume: Bool { scope.map { library.ejectableVolumes.contains($0.volume) } ?? false }
+
+    /// The Eject command: the volume holding the folder showing now.
+    public func ejectVolume() {
+        if let scope { library.eject(scope.volume) }
     }
 
     // MARK: Changing the view
@@ -486,14 +553,20 @@ public final class BrowserModel {
 
     private func currentSession() -> BrowseSession? {
         guard let scope else { return nil }
-        let anchor = selection.currentAsset
-            ?? active?.captureAnchor().flatMap { $0.row < result.count ? AssetID(rawValue: result.assetIDs[$0.row]) : nil }
-        return BrowseSession(scope: scope, sort: sort, viewMode: viewMode.rawValue, tileSize: tileSize, anchor: anchor)
+        // What's on screen and what's current can be far apart, and both are part of your place.
+        let seen = active?.captureAnchor()
+        let anchor = seen.flatMap { $0.row < result.count ? AssetID(rawValue: result.assetIDs[$0.row]) : nil }
+        let height = active?.anchorViewportHeight ?? 0
+        return BrowseSession(
+            scope: scope, sort: sort, viewMode: viewMode.rawValue, tileSize: tileSize,
+            anchor: anchor ?? selection.currentAsset,
+            anchorPosition: seen.flatMap { height > 0 ? min(max(Double($0.screenY / height), 0), 1) : nil },
+            current: selection.currentAsset, isViewerOpen: isViewerOpen)
     }
 
     // MARK: Files
 
-    /// Opens Finder at the current selection. Offline files can't be shown, so nothing happens.
+    /// Opens Finder at the current selection. The menu item is disabled offline.
     func showInFinder(rows: [Int]) {
         let instances = rows.prefix(32).map { result.instanceIDs[$0] }
         let store = library.store
