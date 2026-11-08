@@ -13,6 +13,12 @@ public final class BrowserLibrary {
     public private(set) var folders: [BrowseFolder] = []
     public private(set) var volumes: [VolumeSummary] = []
     public private(set) var onlineVolumes: Set<VolumeID> = []
+    /// What can be done with each online volume's files. Anything not here is offline.
+    public private(set) var volumeAccess: [VolumeID: VolumeAccess] = [:]
+    /// Online volumes the Eject command can act on.
+    public private(set) var ejectableVolumes: Set<VolumeID> = []
+    /// Something about a connected drive that stays true for as long as it's connected.
+    public private(set) var volumeNotice: String?
     public private(set) var isIndexing = false
     public private(set) var activity = ""
     public private(set) var lastError: String?
@@ -26,18 +32,42 @@ public final class BrowserLibrary {
     @ObservationIgnored private var packs: ThumbnailPackStore
     @ObservationIgnored private var monitor: VolumeEventMonitor?
     @ObservationIgnored private var backgroundTasks: [VolumeID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var rescanTasks: [VolumeID: Task<Void, Never>] = [:]
+    /// Rescans that stopped for Add Folder, to start again when it's done.
+    @ObservationIgnored private var interruptedRescans: [VolumeID: MountedVolume] = [:]
+    @ObservationIgnored private var isConnecting = false
+    @ObservationIgnored private var connectsAgain = false
+    @ObservationIgnored private let ejector: VolumeEjector
     /// Tells the browser that the library changed. It decides how often to look.
     @ObservationIgnored var onContentChanged: (() -> Void)?
+    /// A volume came online or went away. The rows are the same, but what they can do isn't.
+    @ObservationIgnored var onVolumesChanged: (() -> Void)?
+    /// Something worth a line in the status bar for a moment.
+    @ObservationIgnored var onNotice: ((String) -> Void)?
 
     /// Must run off the main thread, because it opens the database.
     public nonisolated static func open(url: URL?) throws -> LibraryHandle {
         LibraryHandle(store: try LibraryStore(url: url ?? LibraryStore.defaultURL()))
     }
 
-    public init(_ handle: LibraryHandle) {
+    /// What the app reads with. A writable external drive is fine, because Photon writes nothing to it.
+    public static var defaultOptions: IndexOptions {
+        var options = IndexOptions()
+        options.requiresReadOnlyExternal = false
+        return options
+    }
+
+    /// - Parameters:
+    ///   - ejectScope: Stays at disk images unless this is the app using its real library, so that
+    ///     nothing but the user's own click can reach a real drive.
+    ///   - options: For tests, which inject failures here.
+    public init(
+        _ handle: LibraryHandle, ejectScope: EjectScope = .diskImagesOnly, options: IndexOptions = defaultOptions
+    ) {
         let store = handle.store
         self.store = store
-        let indexer = LibraryIndexer(store: store, extractor: MediaMetadataReader())
+        ejector = VolumeEjector(scope: ejectScope)
+        let indexer = LibraryIndexer(store: store, extractor: MediaMetadataReader(), options: options)
         self.indexer = indexer
         let packs = ThumbnailPackStore(store: store)
         self.packs = packs
@@ -55,45 +85,142 @@ public final class BrowserLibrary {
                 return PasteboardImage.encode(data, as: type)
             }
         }
+        indexer.setChangeHandler { [weak self] in
+            Task { @MainActor in await self?.connectVolumes() }
+        }
         monitor = VolumeEventMonitor(
             center: NSWorkspace.shared.notificationCenter,
-            willUnmount: { [weak self] path in
-                indexer.volumeWillUnmount(mountPoint: path)
-                Task { @MainActor in await self?.refreshVolumes() }
-            },
+            willUnmount: { indexer.volumeWillUnmount(mountPoint: $0) },
             didUnmount: { [weak self] path in
                 indexer.volumeDidUnmount(mountPoint: path)
-                Task { @MainActor in await self?.refreshVolumes() }
+                // A clone isn't connected, so its unmount reaches nothing else.
+                Task { @MainActor in await self?.connectVolumes() }
             },
             didMount: { [weak self] _ in
+                Task { @MainActor in await self?.connectVolumes() }
+            },
+            didRename: { [weak self] old, _ in
+                indexer.volumeDidRename(from: old)
                 Task { @MainActor in await self?.connectVolumes() }
             })
     }
 
-    /// Connects known volumes that are mounted, and carries on with any thumbnails they're missing.
+    /// Connects known volumes that are mounted, rescans them, and carries on with any thumbnails they're
+    /// missing.
     public func start() async {
         await refresh()
         await connectVolumes()
     }
 
+    /// Runs one at a time, however many mount events arrive. One that arrives during a run gets one more.
     private func connectVolumes() async {
-        if let connected = try? await indexer.connectKnownVolumes() {
-            for volume in connected { startThumbnails(volume) }
+        guard !isConnecting else {
+            connectsAgain = true
+            return
         }
-        await refreshVolumes()
+        isConnecting = true
+        defer { isConnecting = false }
+        repeat {
+            connectsAgain = false
+            if let report = try? await indexer.connectKnownVolumes() {
+                setVolumeNotice(duplicates: report.duplicateNames)
+                for connection in report.connections where indexer.access(to: connection.volume) != .offline {
+                    if connection.isNew {
+                        startRescan(connection.volume, mount: connection.mount)
+                    } else if rescanTasks[connection.volume] == nil {
+                        startThumbnails(connection.volume)
+                    }
+                }
+            }
+            refreshVolumes()
+        } while connectsAgain
     }
 
-    private func refreshVolumes() async {
-        let online = Set(indexer.onlineVolumes().values)
-        guard online != onlineVolumes else { return }
-        onlineVolumes = online
-        onContentChanged?()
+    private func setVolumeNotice(duplicates: [String]) {
+        let notice = duplicates.first.map { "A copy of “\($0)” is connected. Photon is using the original." }
+        if notice != volumeNotice { volumeNotice = notice }
+    }
+
+    private func refreshVolumes() {
+        var access: [VolumeID: VolumeAccess] = [:]
+        var ejectable: Set<VolumeID> = []
+        for volume in indexer.onlineVolumes().values {
+            access[volume] = indexer.access(to: volume)
+            if let mount = indexer.mount(of: volume), ejector.canEject(mount) { ejectable.insert(volume) }
+        }
+        guard access != volumeAccess || ejectable != ejectableVolumes else { return }
+        volumeAccess = access
+        ejectableVolumes = ejectable
+        onlineVolumes = Set(access.keys)
+        onVolumesChanged?()
+    }
+
+    /// What changed while a volume was away. An unchanged rescan lists directories and opens no files.
+    private func startRescan(_ volume: VolumeID, mount: MountedVolume) {
+        guard rescanTasks[volume] == nil else { return }
+        let indexer = indexer
+        rescanTasks[volume] = Task {
+            let report = try? await indexer.rescan(mount: mount) { progress in
+                guard case .processing(let processed) = progress else { return }
+                Task { @MainActor in
+                    guard !self.isIndexing else { return }
+                    self.activity = "Read \(processed) files…"
+                    self.onContentChanged?()
+                }
+            }
+            rescanTasks[volume] = nil
+            if !isIndexing { activity = "" }
+            switch report?.outcome {
+            case .cancelled:
+                interruptedRescans[volume] = mount
+                return
+            case .volumeFailing:
+                onNotice?("“\(mount.name)” isn't responding. Photon will try again when it's reconnected.")
+                return
+            case .volumeOffline, nil:
+                return
+            case .completed:
+                break
+            }
+            await refresh()
+            if let scan = report?.scan, scan.added + scan.modified + scan.removed > 0 || report?.processed != 0 {
+                onContentChanged?()
+            }
+            startThumbnails(volume)
+        }
+    }
+
+    // MARK: Eject
+
+    /// The user's Eject command. Failing is normal, because another app may be using the volume, and then
+    /// nothing has changed.
+    public func eject(_ volume: VolumeID) {
+        guard ejectableVolumes.contains(volume) else { return }
+        let name = name(of: volume)
+        let indexer = indexer
+        let ejector = ejector
+        Task {
+            do {
+                try await indexer.eject(volume, using: ejector)
+                onNotice?("“\(name)” was ejected. It can be browsed from stored thumbnails.")
+            } catch {
+                onNotice?("“\(name)” couldn't be ejected. \(error.localizedDescription)")
+            }
+            refreshVolumes()
+        }
+    }
+
+    public func name(of volume: VolumeID) -> String {
+        volumes.first { $0.volume.id == volume }?.volume.name ?? "Volume"
     }
 
     private func refresh() async {
         do {
-            volumes = try await store.volumeSummaries()
-            folders = try await store.folders()
+            // Assigned only when they differ, because each assignment rebuilds the sidebar.
+            let summaries = try await store.volumeSummaries()
+            if summaries != volumes { volumes = summaries }
+            let found = try await store.folders()
+            if found != folders { folders = found }
         } catch {
             lastError = error.localizedDescription
         }
@@ -106,6 +233,9 @@ public final class BrowserLibrary {
         activity = "Reading folders…"
         Task {
             defer { isIndexing = false }
+            // One run at a time on a volume. Pending work is stored, so the next run picks it up.
+            for task in rescanTasks.values { task.cancel() }
+            for task in rescanTasks.values { await task.value }
             do {
                 // At most one update per directory or batch, so the hop to the main actor is bounded.
                 let report = try await indexer.index(path: folder.path) { progress in
@@ -113,13 +243,17 @@ public final class BrowserLibrary {
                 }
                 activity = Self.describe(report)
                 await refresh()
-                await refreshVolumes()
+                refreshVolumes()
+                onContentChanged?()
                 if let volume = report.volumeID { startThumbnails(volume) }
             } catch {
                 activity = ""
                 lastError = error.localizedDescription
                 await refresh()
             }
+            let interrupted = interruptedRescans
+            interruptedRescans.removeAll()
+            for (volume, mount) in interrupted { startRescan(volume, mount: mount) }
         }
     }
 
@@ -163,6 +297,8 @@ public final class BrowserLibrary {
             return "Stopped."
         case .volumeOffline:
             return "The volume went offline. Indexing continues when it's back."
+        case .volumeFailing:
+            return "The volume isn't responding. Indexing continues when it's reconnected."
         }
     }
 }

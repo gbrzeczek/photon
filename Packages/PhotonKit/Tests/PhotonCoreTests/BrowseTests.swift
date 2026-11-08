@@ -158,6 +158,23 @@ struct BrowseTests {
         #expect(stored?.anchor == nil)
     }
 
+    @Test("A session keeps what's on screen and the current item apart, and whether the viewer was open")
+    func sessionPlace() async throws {
+        let library = try await TestLibrary()
+        let first = try await library.add("a.jpg")
+        let second = try await library.add("b.jpg")
+        let session = BrowseSession(
+            scope: scope(library, "DCIM"), sort: BrowseSort(key: .name, ascending: true), viewMode: 0,
+            tileSize: nil, anchor: first.assetID, anchorPosition: 0.4, current: second.assetID, isViewerOpen: true)
+        try await library.store.saveSession(session)
+        #expect(try await library.store.latestSession() == session)
+
+        var updated = session
+        updated.current = AssetID(rawValue: 9999)
+        try await library.store.saveSession(updated)
+        #expect(try await library.store.latestSession()?.current == nil)
+    }
+
     @Test("Going up stops at the root")
     func parentScope() {
         let volume = VolumeID(rawValue: 1)

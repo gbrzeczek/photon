@@ -131,20 +131,25 @@ extension LibraryStore {
                 sql: """
                     INSERT INTO sessions
                         (volume_id, relative_path, sort_key, sort_ascending, view_mode, tile_size, anchor_asset_id,
-                         updated_at)
+                         anchor_position, current_asset_id, viewer_open, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?,
-                        (SELECT id FROM assets WHERE id = ?), ?)
+                        (SELECT id FROM assets WHERE id = ?), ?,
+                        (SELECT id FROM assets WHERE id = ?), ?, ?)
                     ON CONFLICT (volume_id, relative_path) WHERE volume_id IS NOT NULL DO UPDATE SET
                         sort_key = excluded.sort_key,
                         sort_ascending = excluded.sort_ascending,
                         view_mode = excluded.view_mode,
                         tile_size = excluded.tile_size,
                         anchor_asset_id = excluded.anchor_asset_id,
+                        anchor_position = excluded.anchor_position,
+                        current_asset_id = excluded.current_asset_id,
+                        viewer_open = excluded.viewer_open,
                         updated_at = excluded.updated_at
                     """,
                 arguments: [
                     session.scope.volume.rawValue, session.scope.path, session.sort.key.rawValue,
                     session.sort.ascending, session.viewMode, session.tileSize, session.anchor?.rawValue,
+                    session.anchorPosition, session.current?.rawValue, session.isViewerOpen,
                     now.timeIntervalSince1970,
                 ])
         }
@@ -152,12 +157,14 @@ extension LibraryStore {
 
     private static func session(_ row: Row) -> BrowseSession {
         let anchor: Int64? = row["anchor_asset_id"]
+        let current: Int64? = row["current_asset_id"]
         return BrowseSession(
             scope: BrowseScope(volume: VolumeID(rawValue: row["volume_id"]), path: row["relative_path"]),
             sort: BrowseSort(
                 key: SortKey(rawValue: row["sort_key"]) ?? .date, ascending: row["sort_ascending"]),
             viewMode: row["view_mode"], tileSize: row["tile_size"],
-            anchor: anchor.map(AssetID.init(rawValue:)))
+            anchor: anchor.map(AssetID.init(rawValue:)), anchorPosition: row["anchor_position"],
+            current: current.map(AssetID.init(rawValue:)), isViewerOpen: row["viewer_open"])
     }
 }
 

@@ -15,6 +15,7 @@ final class KeyboardNavigationUITests: XCTestCase {
             ProcessInfo.processInfo.environment["PHOTON_UITEST_LIBRARY"], "Set PHOTON_UITEST_LIBRARY.")
         app = XCUIApplication()
         app.launchEnvironment["PHOTON_LIBRARY"] = library
+        app.launchEnvironment["PHOTON_NO_VIEWER_RESTORE"] = "1"
         app.launch()
         // The library remembers its last view, and the test before this one may have ended in the list.
         app.typeKey("1", modifierFlags: .command)

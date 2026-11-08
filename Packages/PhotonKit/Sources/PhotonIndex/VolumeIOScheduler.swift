@@ -21,6 +21,31 @@ public enum VolumeIOError: Error, Equatable, Sendable {
     case system(operation: String, code: Int32)
 }
 
+extension VolumeIOError {
+    /// A failure of the device rather than of one file. A dying drive reports these for a while before
+    /// the mount goes away, so they mustn't be held against the files they happened to name.
+    public var isDeviceFailure: Bool {
+        guard case .system(_, let code) = self else { return false }
+        return [EIO, ENXIO, ENODEV, ETIMEDOUT, ENOTCONN, EDEVERR, EBADF].contains(code)
+    }
+}
+
+/// What a fault can interrupt.
+public enum IOOperation: Sendable {
+    case open, read, status, list
+}
+
+/// A failure a disk image can't produce by itself. A forced detach fails every read at once, while a
+/// real drive can stall, or fail reads while its mount still looks healthy.
+public enum IOFault: Sendable, Equatable {
+    case fail(code: Int32)
+    /// Blocks the I/O thread, the way a stuck read does. Nothing can interrupt it.
+    case stall(Duration)
+}
+
+/// Decides what happens to an operation on a relative path. For tests only.
+public typealias IOFaultInjector = @Sendable (IOOperation, String) -> IOFault?
+
 /// Counts for one scheduler. Tests use these to prove what a rescan touched.
 public struct IOStatistics: Hashable, Sendable {
     public var filesOpened = 0
@@ -62,17 +87,26 @@ public final class VolumeIOScheduler: Sendable {
     private let observer: (@Sendable (String) -> Void)?
     /// Whether the volume is still mounted. Called on the I/O thread, because it can block.
     private let isAvailable: @Sendable () -> Bool
+    /// Told once when a job finds the mount gone, in case the system never says so.
+    private let onLost: (@Sendable () -> Void)?
+    private let faults: IOFaultInjector?
 
-    /// - Parameter isAvailable: Checks that the mount still exists. An unmounted volume makes every
-    ///   path look deleted, so anything that looks missing or empty has to be checked against this.
+    /// - Parameters:
+    ///   - isAvailable: Checks that the mount still exists. An unmounted volume makes every path look
+    ///     deleted, so anything that looks missing or empty has to be checked against this.
+    ///   - onLost: Called on an I/O thread, the first time a job finds the mount gone.
+    ///   - faults: Injected failures, for tests.
     public init(
         mountPoint: String, concurrency: Int = 4, isAvailable: @escaping @Sendable () -> Bool = { true },
-        observer: (@Sendable (String) -> Void)? = nil
+        observer: (@Sendable (String) -> Void)? = nil, onLost: (@Sendable () -> Void)? = nil,
+        faults: IOFaultInjector? = nil
     ) {
         self.mountPoint = mountPoint
         self.concurrency = concurrency
         self.isAvailable = isAvailable
         self.observer = observer
+        self.onLost = onLost
+        self.faults = faults
         // Plain concurrent queue. `pump` is what enforces the limit.
         queue = DispatchQueue(label: "app.photon.io", qos: .utility, attributes: .concurrent)
     }
@@ -88,7 +122,9 @@ public final class VolumeIOScheduler: Sendable {
     ) async throws -> T {
         try await run(priority: priority) { token in
             self.observer?(path.string)
-            let file = try OpenFile(path: self.absolute(path.string), token: token, scheduler: self)
+            try self.applyFault(.open, path.string)
+            let file = try OpenFile(
+                path: self.absolute(path.string), relativePath: path.string, token: token, scheduler: self)
             defer { file.close() }
             return try body(file)
         }
@@ -99,9 +135,10 @@ public final class VolumeIOScheduler: Sendable {
         try await run(priority: priority) { token in
             self.observer?(directory + "/")
             self.update { $0.directoriesListed += 1 }
+            try self.applyFault(.list, directory)
             let entries = try DirectoryLister.list(self.absolute(directory), token: token)
             // An empty listing from a dying mount must not read as a folder with nothing in it.
-            guard self.isAvailable() else { throw VolumeIOError.volumeUnavailable }
+            guard self.checkAvailable() else { throw VolumeIOError.volumeUnavailable }
             return entries
         }
     }
@@ -110,11 +147,12 @@ public final class VolumeIOScheduler: Sendable {
     public func status(of path: RelativePath, priority: IOPriority) async throws -> FileStatus? {
         try await run(priority: priority) { token in
             try token.check()
+            try self.applyFault(.status, path.string)
             var info = stat()
             if lstat(self.absolute(path.string), &info) != 0 {
                 let code = errno
                 if code == ENOENT || code == ENOTDIR {
-                    guard self.isAvailable() else { throw VolumeIOError.volumeUnavailable }
+                    guard self.checkAvailable() else { throw VolumeIOError.volumeUnavailable }
                     return nil
                 }
                 throw VolumeIOError.system(operation: "lstat", code: code)
@@ -132,6 +170,29 @@ public final class VolumeIOScheduler: Sendable {
 
     func update(_ change: (inout IOStatistics) -> Void) {
         state.withLock { change(&$0.statistics) }
+    }
+
+    /// Runs an injected fault, if there is one. Called on the I/O thread.
+    func applyFault(_ operation: IOOperation, _ path: String) throws {
+        switch faults?(operation, path) {
+        case .fail(let code):
+            throw VolumeIOError.system(operation: "injected", code: code)
+        case .stall(let duration):
+            Thread.sleep(forTimeInterval: duration / .seconds(1))
+        case nil:
+            break
+        }
+    }
+
+    /// Whether the mount still exists, and tells `onLost` the first time it doesn't.
+    private func checkAvailable() -> Bool {
+        if isAvailable() { return true }
+        let isFirst = state.withLock { state in
+            defer { state.lostReported = true }
+            return !state.lostReported
+        }
+        if isFirst { onLost?() }
+        return false
     }
 
     private func run<T: Sendable>(
@@ -159,7 +220,7 @@ public final class VolumeIOScheduler: Sendable {
     /// Any error on a volume that has gone is about the volume, not the file or folder it names.
     private func classify(_ error: any Error) -> any Error {
         if error is CancellationError { return error }
-        return isAvailable() ? error : VolumeIOError.volumeUnavailable
+        return checkAvailable() ? error : VolumeIOError.volumeUnavailable
     }
 
     private func enqueue(_ job: Job) {
@@ -227,6 +288,18 @@ public final class VolumeIOScheduler: Sendable {
     public func resume() {
         state.withLock { $0.suspended = false }
     }
+
+    /// Waits for in-flight jobs to return, so that every handle is closed. Returns false if one is still
+    /// running at the limit, which a stuck read can do. Nothing can interrupt that read.
+    public func waitUntilIdle(timeout: Duration) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now + timeout
+        while clock.now < deadline {
+            if state.withLock({ $0.running.isEmpty }) { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return state.withLock { $0.running.isEmpty }
+    }
 }
 
 // MARK: - Internals
@@ -247,6 +320,7 @@ private struct State {
     var running: [UInt64: IOToken] = [:]
     var tokens: [UInt64: IOToken] = [:]
     var suspended = false
+    var lostReported = false
     var nextID: UInt64 = 1
     var statistics = IOStatistics()
 
@@ -323,10 +397,11 @@ public final class OpenFile: ByteSource {
     private var descriptor: Int32
     private let token: IOToken
     private let scheduler: VolumeIOScheduler
+    private let relativePath: String
     public let size: Int64
     public let modifiedTime: FileTimestamp
 
-    init(path: String, token: IOToken, scheduler: VolumeIOScheduler) throws {
+    init(path: String, relativePath: String, token: IOToken, scheduler: VolumeIOScheduler) throws {
         try token.check()
         // O_NOFOLLOW, because enumeration doesn't follow symlinks and a job shouldn't either.
         let descriptor = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
@@ -346,6 +421,7 @@ public final class OpenFile: ByteSource {
         self.descriptor = descriptor
         self.token = token
         self.scheduler = scheduler
+        self.relativePath = relativePath
         size = info.st_size
         modifiedTime = FileTimestamp(seconds: info.st_mtimespec.tv_sec, nanoseconds: info.st_mtimespec.tv_nsec)
         scheduler.update {
@@ -384,6 +460,7 @@ public final class OpenFile: ByteSource {
         do {
             while filled < wanted {
                 try token.check()
+                try scheduler.applyFault(.read, relativePath)
                 let count = pread(
                     descriptor, buffer + filled, min(wanted - filled, VolumeIOScheduler.chunkSize),
                     off_t(offset) + off_t(filled))

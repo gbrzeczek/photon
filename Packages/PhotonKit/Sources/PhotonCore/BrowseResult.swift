@@ -129,14 +129,26 @@ public struct BrowseSession: Hashable, Sendable {
     /// 0 for tiles, 1 for the list.
     public var viewMode: Int
     public var tileSize: Double?
+    /// What the view keeps on screen.
     public var anchor: AssetID?
+    /// How far down the viewport `anchor` was, from 0 to 1.
+    public var anchorPosition: Double?
+    /// The current item, which may have been scrolled away from.
+    public var current: AssetID?
+    public var isViewerOpen: Bool
 
-    public init(scope: BrowseScope, sort: BrowseSort, viewMode: Int, tileSize: Double?, anchor: AssetID?) {
+    public init(
+        scope: BrowseScope, sort: BrowseSort, viewMode: Int, tileSize: Double?, anchor: AssetID?,
+        anchorPosition: Double? = nil, current: AssetID? = nil, isViewerOpen: Bool = false
+    ) {
         self.scope = scope
         self.sort = sort
         self.viewMode = viewMode
         self.tileSize = tileSize
         self.anchor = anchor
+        self.anchorPosition = anchorPosition
+        self.current = current
+        self.isViewerOpen = isViewerOpen
     }
 }
 

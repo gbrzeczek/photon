@@ -5,6 +5,8 @@ struct FolderNode: Identifiable, Hashable {
     var scope: BrowseScope
     var name: String
     var children: [FolderNode]?
+    /// A folder the user added, which is where the sidebar offers Eject.
+    var isRoot = false
     var id: BrowseScope { scope }
 }
 
@@ -29,7 +31,7 @@ enum FolderTree {
             return FolderNode(
                 scope: BrowseScope(volume: root.volume, path: root.path),
                 name: root.path.split(separator: "/").last.map(String.init) ?? rootName(root),
-                children: nodes(under: root.path, byParent: byParent))
+                children: nodes(under: root.path, byParent: byParent), isRoot: true)
         }
     }
 

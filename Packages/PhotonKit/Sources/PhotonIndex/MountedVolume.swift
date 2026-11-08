@@ -11,6 +11,17 @@ public enum DriveLocation: String, Sendable, Hashable {
     case unknown
 }
 
+/// What can be done with a volume's files right now. A file operation must check this first, and disable
+/// itself rather than fail.
+public enum VolumeAccess: Sendable, Hashable {
+    case offline
+    case readOnly
+    case writable
+
+    /// Whether rename and Move to Trash can work here.
+    public var canModifyFiles: Bool { self == .writable }
+}
+
 public enum MountError: Error, Equatable, Sendable {
     case pathNotFound
     /// Not backed by a disk, such as a network share or a synthetic mount.
@@ -60,8 +71,11 @@ public struct MountedVolume: Hashable, Sendable {
 
     /// Every mounted local disk that has an identity.
     public static func all() -> [MountedVolume] {
+        // The `_r_np` form, because plain `getmntinfo` shares one buffer across threads, and two mount
+        // events at once corrupted the heap with it.
         var list: UnsafeMutablePointer<statfs>?
-        let count = getmntinfo(&list, MNT_NOWAIT)
+        let count = getmntinfo_r_np(&list, MNT_NOWAIT)
+        defer { free(list) }
         guard count > 0, let list else { return [] }
         return (0..<Int(count)).compactMap { index in
             guard list[index].f_flags & UInt32(MNT_LOCAL) != 0 else { return nil }
@@ -121,6 +135,14 @@ public struct MountedVolume: Hashable, Sendable {
         }
     }
 
+    /// The disk this volume is on, such as `disk4` for `disk4s1`.
+    var wholeDiskName: String {
+        guard let digit = bsdName.firstIndex(where: \.isNumber),
+            let slice = bsdName[digit...].firstIndex(of: "s")
+        else { return bsdName }
+        return String(bsdName[..<slice])
+    }
+
     /// Whether this exact mount still exists. A different volume at the same path doesn't count.
     public func isStillMounted() -> Bool {
         var info = statfs()
@@ -136,11 +158,11 @@ public struct MountedVolume: Hashable, Sendable {
     }
 }
 
-/// The safety rule for reading real drives during development.
+/// The safety rule for reading real drives with development tools. The app doesn't apply it, because a
+/// normal external drive is mounted writable: see `IndexOptions.requiresReadOnlyExternal`.
 public enum MountPolicy {
-    /// Why this volume mustn't be read, or nil if it may be. Photon never writes to a drive, but until
-    /// that has been proven on real media, an external drive has to be mounted read-only, so that
-    /// a bug can't damage it. Unknown drives count as external.
+    /// Why this volume mustn't be read, or nil if it may be. Tools stay stricter than the app, so that
+    /// a mistake made while measuring can't reach a writable drive. Unknown drives count as external.
     public static func refusalReason(for volume: MountedVolume) -> String? {
         switch volume.location {
         case .internal, .diskImage:

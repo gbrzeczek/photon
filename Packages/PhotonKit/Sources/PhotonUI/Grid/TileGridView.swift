@@ -667,6 +667,13 @@ final class TileGridView: NSView, BrowserContent {
     }
     func thumbnailsReady() { startTicking() }
 
+    var anchorViewportHeight: CGFloat { viewportHeight }
+
+    func retryThumbnails() {
+        guard !isHidden else { return }
+        requestVisibleThumbnails()
+    }
+
     func tileSizeDidChange() {
         scrollZoom = nil
         guard result.count > 0 else {

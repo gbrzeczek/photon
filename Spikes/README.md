@@ -10,4 +10,4 @@ Throwaway measurement code, kept apart from the planned `Packages/PhotonKit` lay
 | `Mpv/` | 2. libmpv embedding | `swift build -c release`, then the steps in `RESULTS.md` |
 | `Signing/` | 5. Self-signed permission persistence | `./verify-persistence.sh <mount of a real removable volume>` |
 
-Disk image scripts create their own images in the scratch directory you pass. Tools that take a real volume are read-only, and `real-media.sh pull` and `throughput bench` refuse a writable external mount.
+Disk image scripts create their own images in the scratch directory you pass. Tools that take a real volume are read-only, and `throughput bench` refuses a writable external mount. Physical pulls are no longer part of testing, so `real-media.sh pull` is gone. See [Removable media checks](../docs/PLAN.md#removable-media-checks).

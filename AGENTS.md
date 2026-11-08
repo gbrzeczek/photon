@@ -36,11 +36,15 @@ The UI tests need an unlocked screen, so they aren't in CI:
 TEST_RUNNER_PHOTON_UITEST_LIBRARY=<file> xcodebuild test -project Photon.xcodeproj -scheme Photon -destination 'platform=macOS'
 ```
 
+`PHOTON_NO_VIEWER_RESTORE=1` starts from the grid even if the last run ended in the viewer, and `PHOTON_PERF_OUT` does the same.
+
 Start measurements from a shell, not with `open`: an unsigned build started by Launch Services can't read a removable drive, and it fails quietly. Check `backingScale` in the output, which says which display a run really used.
+
+`RemovableMediaUITests` needs `TEST_RUNNER_PHOTON_UITEST_REMOVABLE_LIBRARY`, a library made from an exFAT disk image, and `UITests/removable-media-helper.sh <image>` running in another terminal. Its header explains them.
 
 `PHOTON_VIEWER_ROW=<n>` opens the viewer on a row, for looking at it with `PHOTON_SNAPSHOT=<file>`. `FileTransferUITests` also needs `TEST_RUNNER_PHOTON_UITEST_FILES_LIBRARY` and `TEST_RUNNER_PHOTON_UITEST_DROP_FOLDER`, and its header explains them.
 
-`scan` refuses an external volume unless it's mounted read-only, and `generate` only writes to the internal disk or a disk image. Keep libraries built from a real drive out of this repository, because they contain real file names.
+`photon-index scan` refuses an external volume unless it's mounted read-only, though the app reads one that is writable, and `generate` only writes to the internal disk or a disk image. Keep libraries built from a real drive out of this repository, because they contain real file names.
 
 The tests create and mount exFAT disk images with `hdiutil`, which works without a real drive.
 
@@ -115,7 +119,10 @@ Use SwiftUI for the app shell and AppKit where large-scale performance or precis
 - Use Swift Testing for logic, and cover identity, merging, volume matching and migrations thoroughly.
 - Use a synthetic library generator for performance tests, so that they don't depend on personal photos.
 - Never commit personal photos or videos as fixtures.
-- Removable media behavior needs a physical check on a real external drive, including pulling the drive during reads.
+- Check removable media behavior on disk images, with `hdiutil detach -force` for a removed drive, and with injected I/O failures for what a disk image can't produce. Disk images use the same FSKit exFAT driver as the real drive. This is the user's decision, to protect the data on their drive, so no physical pull is required. See [Removable media checks](docs/PLAN.md#removable-media-checks) for what this can't show.
+- Never pull, unmount, eject, remount, write to or power-cycle the real drive, by any means, and never ask the user to. It stays mounted read-only, and reading from it for measurements is fine.
+- Test Eject only on disk images. Only an app using its real library can eject anything else, so a run with `PHOTON_LIBRARY`, a test or a tool can't reach a real drive.
+- Only detach disk images that the current run created, and find them by image path with `hdiutil info`. Never detach by a guessed disk number.
 - For UI changes, run the app and check them in both light and dark mode.
 - Automate UI tests for keyboard navigation in grid, list and viewer.
 

@@ -184,6 +184,7 @@ extension LibraryStore {
                 AND NOT EXISTS (SELECT 1 FROM stack_members WHERE asset_id = assets.id)
                 AND NOT EXISTS (SELECT 1 FROM stacks WHERE cover_asset_id = assets.id)
                 AND NOT EXISTS (SELECT 1 FROM sessions WHERE anchor_asset_id = assets.id)
+                AND NOT EXISTS (SELECT 1 FROM sessions WHERE current_asset_id = assets.id)
                 """,
             arguments: [id])
     }

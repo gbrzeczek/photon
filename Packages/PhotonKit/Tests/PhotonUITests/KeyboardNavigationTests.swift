@@ -286,7 +286,8 @@ struct BrowsingTests {
         browser.model.select(row: row)
         let asset = try #require(browser.model.selection.currentAsset)
         let session = BrowseSession(
-            scope: browser.scope, sort: .default, viewMode: 0, tileSize: 200, anchor: asset)
+            scope: browser.scope, sort: .default, viewMode: 0, tileSize: 200, anchor: asset,
+            current: asset)
         try await browser.library.store.saveSession(session)
 
         let next = BrowserModel(library: browser.library)

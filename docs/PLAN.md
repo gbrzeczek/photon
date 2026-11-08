@@ -2,7 +2,7 @@
 
 Photon is a native macOS browser for photos and videos stored in local folders and on removable media. This document records the product scope, architecture, milestones and open risks.
 
-**Status:** Milestone 3 is built and measured on a real screen, on a seeded 100k library and on the T7 Touch's real library of 27,235 assets. See [Milestone 3 results](#milestone-3-results) and [Milestone 2 results](#milestone-2-results). The drive doesn't hold 100k files, so those two libraries together stand in for a 100k library on the drive. Spike code lives in [`Spikes/`](../Spikes/README.md), and results are under [Milestone 0 spikes](#milestone-0-spikes) and [Milestone 1 results](#milestone-1-results).
+**Status:** Milestone 4 is built and checked on disk images, with no physical pull by the user's decision, and measured on a real screen on a seeded 100k library and on the T7 Touch's real library of 27,235 assets. See [Milestone 4 results](#milestone-4-results), [Milestone 3 results](#milestone-3-results) and [Milestone 2 results](#milestone-2-results). The drive doesn't hold 100k files, so those two libraries together stand in for a 100k library on the drive. Spike code lives in [`Spikes/`](../Spikes/README.md), and results are under [Milestone 0 spikes](#milestone-0-spikes) and [Milestone 1 results](#milestone-1-results).
 
 ## Product scope
 
@@ -54,6 +54,8 @@ Cloud backup, duplicate detection and face recognition are future features (see 
 | Viewer | An overlay in the same window, one layer whose contents move from thumbnail to preview to full resolution. It covers the detail column, so the sidebar stays | The grid is never torn down, and a sharper image lands without anything moving |
 | Previews | The size that fills the viewer for that photo, not the screen | A screen-sized preview would be scaled back down by the GPU, which costs sharpness as well as memory |
 | Pasteboard writes | Off the main thread, after clearing the pasteboard at once | Writing costs about 150 µs per real file, and it must never stall a frame |
+| Eject | Disk images only, unless the app is using its real library with no development setting. `VolumeEjector` reads the volume's location from the system again immediately before acting | The real drive must be out of reach of every test and tool, by construction rather than by care |
+| Writable external drives | Read by the app, refused by `photon-index` | A normal external drive is mounted writable, and a test shows that indexing and thumbnails change no byte of a writable exFAT image. Tools stay strict, so a slip while measuring can't reach a writable drive |
 | Distribution | No sandbox, no App Store. Self-signed DMGs built by GitHub Actions | Personal and portfolio project, no paid program needed |
 
 ## Architecture
@@ -71,7 +73,7 @@ Organization data attaches to content, and files are only locations of that cont
 | `stacks`, `stack_members` | Grouped assets: RAW+JPEG pairs, Live Photos, later similar scenes |
 | `albums`, `album_assets` | Manual albums. Smart albums are saved queries |
 | `tags`, `asset_tags` | Tags |
-| `sessions` | Per-location view state: sort, zoom, view mode, anchor asset |
+| `sessions` | Per-location view state: sort, zoom, view mode, the asset on screen and how far down it was, the current item, and whether the viewer was open |
 | `thumbnail_packs`, `thumbnails` | Pack files on the internal disk, and each asset's offsets in them, by size |
 
 Exact duplicates are several `file_instances` pointing at one asset, so they need no separate mechanism.
@@ -96,20 +98,48 @@ On mount:
 2. Check a sample of 64 indexed files by relative path, size and modified time. This catches a drive that was reused, or a clone that has since diverged.
 3. If at least half the sample matches, bring the volume online and restore its sessions. It's a majority rather than every file, because files on a drive do change between sessions.
 4. If it doesn't, treat it as a new volume. Assets reattach as files are hashed.
-5. Rescan incrementally, skipping files whose path, size and modified time are unchanged.
+5. Rescan incrementally, skipping files whose path, size and modified time are unchanged. This runs in the background on every new connection, at launch too. An unchanged rescan lists directories and opens no files, and the rows only reload if something changed.
 
 Rules that follow from this:
 
 - Paths are stored relative to the volume root, because mount paths change (`/Volumes/Foo 1`).
 - Bookmarks and file IDs are not used for identity. Bookmarks have been reported to break on exFAT. exFAT and FAT32 file IDs survive remounts, renames and moves on disk images, but they are reused for unrelated files after a delete, and exFAT IDs behaved like start clusters.
-- A byte-for-byte clone is indistinguishable from its original: same UUID, file IDs, sizes and dates. It's harmless when mounted alone, because it is the same content. When two volumes with one UUID are mounted together, Photon must keep them apart by BSD name for the session, and must not bring a second copy online as the same `volumes` row. For now the second one simply isn't indexed for that session. Milestone 4 decides what the UI shows.
+- A byte-for-byte clone is indistinguishable from its original: same UUID, file IDs, sizes and dates. It's harmless when mounted alone, because it is the same content. When two volumes with one UUID are mounted together, Photon must keep them apart by BSD name for the session, and must not bring a second copy online as the same `volumes` row. The second one isn't indexed for that session, and the status bar says "A copy of "Name" is connected. Photon is using the original." until it goes. exFAT's serial comes from the clock, so two images made in the same second share a UUID, and an unrelated volume could look like a clone in the same way.
 - Don't use `isRemovable` or `isEjectable` to recognize external media. The T7 Touch reports both as false, and it reports no persistent ID support.
 - Don't use `URLResourceKey.volumeUUIDStringKey` for identity. On FAT32 it returned a different UUID for a second mount of a clone, while DiskArbitration stayed stable.
-- On `willUnmount`, cancel all work and close every file handle so that ejecting succeeds. An open handle does block the unmount. `willUnmount` also fires before an unmount that then fails, so if no `didUnmount` follows, the volume is still mounted and work must resume. Photon waits 5 seconds to find out.
+- On `willUnmount`, cancel all work and close every file handle so that ejecting succeeds. An open handle does block the unmount. `willUnmount` also fires before an unmount that then fails, so if no `didUnmount` follows, the volume is still mounted and work must resume. Photon waits 5 seconds to find out. A suspended volume counts as offline in the meantime, and a volume that resumes picks up its thumbnails and sharpens what's on screen.
+- `NSWorkspace` sends all three events for every local volume, including disk images attached with `-nobrowse`, and a forced detach sends both unmount events. A real failure may not, so a job that finds the mount gone also takes the volume offline, once.
+- Renaming a volume moves its mount point with no unmount, so `didRenameVolume` ends the old session and reconnects.
+- A dying drive can fail reads while its mount still looks healthy. `EIO` and its relatives are device failures, and a batch where every file fails asks the drive to list its root. If it can't, the run stops as `volumeFailing` and no file is blamed. If it can, the files really are bad. A batch with some successes counts its failures against the files, which at worst costs a file one of its three attempts.
+- `getmntinfo` shares one buffer across threads, and two mount events at once corrupted the heap. Use `getmntinfo_r_np`.
 - A gone mount makes every path look deleted. Any error, or empty listing, is checked against the mount before it's believed, so a failing drive never looks like an empty one. A scan only forgets a folder when the volume is still mounted and the scan confirmed it's gone. Folders that couldn't be listed keep their files.
 - Reads on removable media must not be memory-mapped, because pulling the drive during a mapped read crashes the process (SIGBUS confirmed on a disk image). Ordinary reads return `EIO` immediately. Load bytes with ordinary reads and hand them to `CGImageSource`.
 - Read-only volumes are normal: NTFS drives, and volumes mounted read-only. Rename and Move to Trash are disabled there.
-- A sleeping drive can take a moment to wake, so the UI needs a calm waiting state.
+- A sleeping drive can take a moment to wake. Nothing waits for it, and after a second the viewer's status bar says "Waiting for Name…". A stuck read can't be interrupted, so Eject waits 2 seconds for handles to close and then lets macOS answer.
+
+**Offline.** A disconnected volume is a normal state. The status bar names it, and the sidebar shows its folders with a drive symbol. Everything that needs only the library keeps working:
+
+| Feature | Offline |
+|---|---|
+| Sidebar, browsing, sorting, selection, list and tile views, keyboard | As usual, from the library |
+| Tiles | Stored thumbnails, then the dominant color, then a neutral fill |
+| Viewer | The stored thumbnail, and anything still in memory. Moving on works, and a read that was refused is retried when the volume returns |
+| Copy | Up to 16 photos paste as their stored thumbnail. Past that they're left out. The status bar says so either way |
+| Drag | Nothing to drag, and the status bar says why, once per selection |
+| Show in Finder | Disabled |
+| Add Folder | Works for other volumes. An offline folder can't be chosen |
+| Thumbnails and indexing | Stop calmly, with nothing marked as failed, and carry on after a reconnect |
+| Sessions | Saved and restored as usual |
+| Eject | Not offered |
+| Rename, Move to Trash | Not built. They must check `VolumeAccess.canModifyFiles` and disable themselves |
+
+**Read-only volumes** behave as if online. The status bar says Read Only, and `VolumeAccess` is what future file operations must ask.
+
+**Reconnecting** changes no rows unless the rescan found changes, so the place, selection and viewer stay put. What's on screen is asked for again, and the viewer tries again for anything sharper.
+
+**Eject** is File → Eject, Command-E, the eject button on a root in the sidebar, or its context menu. It acts on the volume holding the folder showing, and ejects the whole disk, as Finder does. It stops all Photon's work on that disk first, and waits for handles to close, because an open handle blocks the unmount. If macOS refuses, usually because another app has a file open, nothing has changed, and the status bar says so.
+
+**Session restore.** A session stores the asset on screen and how far down it was, and the current item separately, because they can be far apart. That's a fraction of the viewport, so it doesn't depend on window size. Launch also reopens the viewer if it was open, with `PHOTON_NO_VIEWER_RESTORE` turning that off for tests. A session for a folder that has left the library falls back to the first folder. An offline folder is still in the library, so it stays.
 
 ### Indexing
 
@@ -245,6 +275,7 @@ Keyboard navigation is built alongside the grid, list and viewer, not added duri
 | Grid | Cmd-Equals, Cmd-Minus | Change tile size |
 | Everywhere | Cmd-1, Cmd-2 | Tile view, list view |
 | Everywhere | Cmd-C | Copy |
+| Everywhere | Cmd-E | Eject the volume holding this folder |
 | Everywhere | Period | Toggle favorite |
 | Everywhere | Cmd-I | Show or hide the inspector |
 | Everywhere | Cmd-F | Search |
@@ -322,6 +353,8 @@ These are targets for an M4 Max. The figures below are from a release build on a
 | Open or close the viewer | No dropped frames in the transition | One frame lost as each begins, then the flight runs clean. See [Milestone 3 results](#milestone-3-results) |
 | Next photo sharp in the viewer | At once when preloaded | Under 0.3 ms preloaded. 95–145 ms typically and 254 ms at worst when not, from the T7 |
 
+Milestone 4's figures, with the first-pass frames over budget, are in [Milestone 4 results](#milestone-4-results).
+
 The spike's in-app timers reported no missed frames in the same scenarios where Instruments found these hitches. Don't rely on the in-app numbers alone.
 
 Budgets are tracked with `os_signpost` and automated performance tests on a synthetic library, starting in Milestone 1.
@@ -334,7 +367,7 @@ Budgets are tracked with `os_signpost` and automated performance tests on a synt
 | 1 | **Foundation:** packages, CI, schema, scanner, metadata | A real drive indexes in the background, and rescans touch only changed files |
 | 2 | **Grid:** thumbnails, fluid tile size, list view, sorting, selection, keyboard navigation | Budgets met on a 100k library, on the external drive, and arrow-key navigation and selection work in grid and list |
 | 3 | **Viewer:** progressive loading, zoom, HDR, transitions, copy and drag, keyboard control | Your place is always kept, copy works in every mode, and the viewer can be navigated from the keyboard |
-| 4 | **Removable media:** mount handling, offline mode, session restore, eject | Passes the drive-pull and reconnect tests |
+| 4 | **Removable media:** mount handling, offline mode, session restore, eject | Passes the [removable media checks](#removable-media-checks) on disk images: forced detach, injected failures, reconnect and eject |
 | 5 | **Organization:** favorites, albums, tags, smart albums, search, stacks | Favorites survive moving a library to a new drive |
 | 6 | **Video:** AVPlayer, fallback engine, thumbnails, scrub previews | A format test set plays and shows thumbnails |
 | 7 | **Polish and release:** accessibility, Settings, onboarding, signed DMG workflow, screenshots | Ready for daily use, with a tagged release on GitHub |
@@ -344,13 +377,33 @@ Budgets are tracked with `os_signpost` and automated performance tests on a synt
 
 The schema work in Milestone 1 includes the identity model and stacks, even though their features arrive later.
 
+### Removable media checks
+
+**The user's decision:** Photon's removable media behavior is checked without any physical pull, to protect the data on the real drive. The T7 Touch is never pulled, unmounted, ejected, remounted, written to or power-cycled for a test, by any means. It stays mounted read-only, and reading from it for measurements is fine. This replaces the physical drive-pull test that earlier versions of this plan asked for.
+
+What stands in for a pull:
+
+| Check | How |
+|---|---|
+| Drive removed | `hdiutil detach -force` on an exFAT disk image, which uses the same FSKit driver as the drive |
+| Reconnect | Detaching and attaching the same image, which has the same UUID and files |
+| Eject | The app's own Eject command, on disk images only |
+| What an image can't produce | Injected I/O failures in `VolumeIOScheduler`: reads that fail while the mount still looks healthy, and reads that stall |
+
+**What simulation can't show:**
+
+- A real USB failure's timing. A forced detach fails reads at once, and a real cable may first stall them for seconds. Injected stalls cover the logic, not the true length or shape of a stall.
+- What the USB stack, the drive's firmware and exFAT's on-disk state do when power goes during a read. Photon only reads, but the check says nothing about the drive's own behavior.
+- Removable-volume permission, because disk images aren't gated by TCC.
+- A drive that vanishes without any notification. A real failure's order of events may differ from a disk image's.
+
 ### Milestone 0 spikes
 
 | # | Spike | State |
 |---|---|---|
 | 1 | Grid zoom and navigation | Decided: `CALayer` grid. Real trackpad and VoiceOver checks remain |
 | 2 | libmpv embedding | Decided: render API in a `CAOpenGLLayer`. On-screen pacing and our own build remain |
-| 3 | Volume identity | Done on the T7 Touch and disk images, except a physical pull |
+| 3 | Volume identity | Done on the T7 Touch and disk images. A physical pull was dropped by the user's decision |
 | 4 | External drive throughput | Done on the T7 Touch, except video thumbnails |
 | 5 | Signing | Done: the grant persisted across rebuilds on the T7 Touch |
 
@@ -427,7 +480,7 @@ Run on the real T7 Touch, read-only, and on disk images. Disk images use the sam
 | Unmount with a handle closed on `willUnmount` | Succeeded about 220 ms later |
 | Unmount with a handle held open | Refused, and `willUnmount` had already fired |
 
-**Not tested:** a physical pull of the drive, which was left out to protect the data on it, and is a Milestone 4 test on a drive holding nothing important. File IDs across a physical reconnect were not compared, only across remounts. Whether modified times shift on exFAT when the time zone changes is also untested, and that would affect the file sample in step 2.
+**Not tested:** a physical pull of the drive, which was left out to protect the data on it. It won't be tested, by the user's decision: see [Removable media checks](#removable-media-checks). File IDs across a physical reconnect were not compared, only across remounts. Whether modified times shift on exFAT when the time zone changes is also untested, and that would affect the file sample in step 2.
 
 #### Spike 4: External drive throughput
 
@@ -463,6 +516,74 @@ The tool was first validated on an exFAT disk image, and those numbers are in `S
 - **Why it works:** a self-signed certificate gives a designated requirement of bundle identifier plus certificate, which stayed identical across rebuilds. Ad-hoc signing gives a `cdhash` requirement, which changes on every build.
 - **Also confirmed:** `codesign` works with an untrusted certificate when given its SHA-1 hash and keychain, so CI doesn't need to trust it. Local builds ran, even though `spctl` rejects them.
 - **Testing note:** disk images aren't gated by TCC at all, so this check always needs a real drive.
+
+### Milestone 4 results
+
+Checked on disk images only, by the user's decision in [Removable media checks](#removable-media-checks). The T7 Touch was never pulled, unmounted, ejected, remounted or written to, and stayed mounted read-only at every check. It was only read, for measurements.
+
+| Check | How | Result |
+|---|---|---|
+| Forced detach while browsing | `hdiutil detach -force`, in tests and in the real app | The grid, list and viewer keep their place and selection. The status bar names the volume, and nothing is marked as failed |
+| Forced detach while making thumbnails | A read delay injected so the detach lands mid-run | The run stops calmly, and finishes after a reattach with 0 failures |
+| Forced detach in the viewer | XCUITest, real app | The viewer stays open on the same photo, then sharpens after the reattach |
+| Reconnect | Detaching and attaching the same image | Rows unchanged, place kept, thumbnails resume. A rescan runs on each connection |
+| Eject | File → Eject and Command-E, XCUITest, real app | Unmounts the image, the folder goes offline, and the next attach brings it back |
+| Eject refused | A handle held open by another process | Nothing changes, work resumes, and the status bar says so |
+| Eject on a real drive | `EjectScope` | Refused under tests, tools and any `PHOTON_*` setting. Never run |
+| Reads that fail on a healthy-looking mount | Injected `EIO` | The run stops as `volumeFailing`, and no file is blamed |
+| Reads that stall | Injected stalls | The viewer says "Waiting for Name…" after a second, and nothing blocks the main thread |
+| `willUnmount` with no `didUnmount` | Unmount refused | Work resumes after 5 seconds |
+| Two mount events at once | Parallel image attaches | Crashed in `getmntinfo` until it became `getmntinfo_r_np` |
+| A clone beside its original | Two images with one UUID | The second is kept out, and the status bar says so |
+| Read-only volume | Image attached `-readonly` | Normal browsing, Read Only in the status bar |
+| Writable exFAT image | Index and make thumbnails, then hash every byte | No byte changed compared with attaching alone, because FSKit mounts exFAT `noatime` |
+| Session restore | Tests, and quitting in the viewer | The place, current item and open viewer come back. A v2 library migrates to v3 |
+
+**Tests:** 412 Swift Testing tests pass, including 29 integration tests on disk images. XCUITests, through the real app with real events on a disk image: 16 of 16, which were 3 removable media tests and 13 keyboard tests. The Copy test was skipped, and `FileTransferUITests` wasn't rerun.
+
+**Light and dark**, by screenshot: online, read-only, offline, and the offline viewer, each in both modes.
+
+**Budgets**, from a release build with the window filling the display, on the external 1x display and the Retina built-in display at 120 Hz. AC power wasn't confirmed.
+
+| Measure | Seeded 100k | T7 Touch, 27,235 assets |
+|---|---|---|
+| Launch to result | 309–365 ms, and 618 ms on the first launch after the v3 migration | 338–369 ms |
+| Launch to the frame after it | 344–438 ms | |
+| Open a folder | 72–85 ms | 23–34 ms |
+| Grid | 119.3–120 fps, p99 3.0 ms, worst 4.4 ms | 118.1–120 fps, worst 2.9 ms |
+| List scroll | 119–119.3 fps, worst 8.9–10.6 ms | Worst 11.0 and 12.8 ms in a first pass, 3.0–6.4 ms in 3 repeats |
+| Viewer open and close | 97 fps, 10 missed | 98–99 fps, 10–12 missed |
+| Viewer arrows | 116.6–118.4 fps, worst 7.7 ms | 116.4–117.5 fps, worst 8.3 ms once, 6.1–6.8 ms in 3 repeats |
+| Memory after the scenarios | 466–505 MB | 439–634 MB |
+
+The list's 12.8 ms and the viewer's 8.3 ms are over the 8 ms budget, once each, in a first pass, and neither came back in three repeats. The list's figure is within what was accepted at Milestone 2. Launch to the frame reached 438 ms once, over the 350 ms target.
+
+**Detach under load:** a 3,000-file image library with thumbnails generating, forced detach and reattach twice during the grid, list and viewer scenarios. The grid held 120 fps with no missed frame and a worst frame of 2.2 ms, the list's worst was 8.3 ms, and memory was 248 MB. All 3,000 files stayed indexed, and 2,581 photos got thumbnails with none failed. Which scenarios the detaches landed in wasn't logged.
+
+**Animation Hitches**, a 40-second recording of all processes, with the T7 library on the Retina display, final code, running scroll, viewer open and close, viewer arrows and list scroll. Launch had hitches of 92 and 33 ms in Photon, while the window moved to its display, and a 250 ms one in the Dock and WindowServer. After launch there were 5 more in about 25 seconds of scenarios. Two of them, of 8 ms, list Photon. Two of 17 ms, two frames each, list only the Dock and WindowServer, and one of those also had a single-frame hitch listing Photon. Photon's own timers in that run: scroll 119.4 fps with 2 missed, viewer open and close 100.5 fps with 11 missed, viewer arrows 117.1 fps with 1 missed, list scroll 118.4 fps with 2 missed, and a worst main-thread frame of 1.7 ms. Render-server times per frame weren't extracted this time.
+
+What running it found, and fixed:
+
+- **Two mount events at once crashed the process.** `getmntinfo` shares one buffer across threads, so a full test run corrupted the heap. It left three images attached, which were detached by image path.
+- **A restored session selected the anchor without a current item**, because v2 sessions only stored the anchor. The migration copies the anchor to the current item.
+- **Images made in the same second looked like clones**, because exFAT's serial comes from the clock. Another suite's image once made the clone test see two pairs, so it now looks for its own pair among those reported.
+- **The XCUITest runner is sandboxed** and can't attach images, so `UITests/removable-media-helper.sh` does it for the runner, on one image path.
+- **Restoring the viewer broke keyboard UI tests** that expect the grid, so `PHOTON_NO_VIEWER_RESTORE` starts from the grid.
+- **The offline viewer said Offline twice**, in the status bar and over the photo.
+- **An Instruments recording of all processes** writes about half a gigabyte a second to the temporary folder, and leaves it behind if the recording is killed or fails. Two attempts filled the disk, and a timeout around `xctrace` killed it while it was still processing.
+
+**Writable external drives.** The app now reads a writable volume, because the indexing check above changed no byte. `photon-index scan` still refuses one, and the T7 stays read-only.
+
+**Not verified:**
+
+- Everything in [what simulation can't show](#removable-media-checks): a real USB failure's timing, the drive's own behavior when power goes, TCC for removable volumes, and a real failure's order of events.
+- Eject on any real drive. It has never run on one, by rule, and in the user's real app the sidebar shows an eject button on the T7's folders.
+- A real `didRenameVolume` reaching the app. Tests call the rename handler directly.
+- A real drag while offline. Only the status message is tested.
+- `FileTransferUITests`, and the Copy UI test, weren't rerun on the final code. The Copy test ran once by mistake while the zoom test was failing, and passed.
+- Cold launch after a reboot, and plugged-in power.
+
+**Not built:** Rename and Move to Trash, which must check `VolumeAccess.canModifyFiles`.
 
 ### Milestone 3 results
 
@@ -520,7 +641,7 @@ Tested with no display: 365 Swift Testing tests, including real key events in a 
 
 A disk image detached while another test listed the mounts crashed the process once: a volume on its way out reported a block count too large for `Int64`. Capacity now treats an overflow as unknown, because a real drive being pulled could do the same.
 
-**Not verified:** how the transitions look frame by frame, because window capture lags them. They're measured, and the flight has been watched only by the user, if at all. Reduce Motion's fades. Pasting into Messages and Figma themselves, as opposed to another process reading the same pasteboard. Dragging from the list or the viewer, which share the grid's code but only their preparation is tested. Real HDR photos from a camera or phone, PQ and HLG files, and HDR on an external display. RAW files. Panoramas past the size limits on a real screen. VoiceOver itself, a real trackpad swipe, and non-US keyboard layouts. How the eased scroll zoom feels on a real mouse wheel, and the direction a real wheel zooms. A real trackpad pinch works, as checked by the user. Pulling a real drive while viewing, which belongs to Milestone 4's physical check. The drive pulled during a paste.
+**Not verified:** how the transitions look frame by frame, because window capture lags them. They're measured, and the flight has been watched only by the user, if at all. Reduce Motion's fades. Pasting into Messages and Figma themselves, as opposed to another process reading the same pasteboard. Dragging from the list or the viewer, which share the grid's code but only their preparation is tested. Real HDR photos from a camera or phone, PQ and HLG files, and HDR on an external display. RAW files. Panoramas past the size limits on a real screen. VoiceOver itself, a real trackpad swipe, and non-US keyboard layouts. How the eased scroll zoom feels on a real mouse wheel, and the direction a real wheel zooms. A real trackpad pinch works, as checked by the user. A disk image detached during a paste.
 
 **Not built:** the viewer has no way to explain missing permission. Videos don't play until Milestone 6, and rotation isn't applied.
 
@@ -628,9 +749,9 @@ As a second measure of what the pipeline itself costs, a release build read a 14
 - A `diskutil unmount` from outside the process succeeded during a run on that image. The run ended as `volumeOffline` with no failures.
 - Tests on exFAT images cover changed-file rescans, read-only mounts staying byte-identical, remounts at a new path, clones, a forced detach, a normal eject and a refused unmount.
 
-**Not verified:** a rescan of real changes on the T7 Touch, because it stayed read-only, so that's shown on disk images only. Also a remount of the T7 Touch, a refusal of the drive when it's really mounted writable, which is covered by a unit test only, and a physical pull, which is a Milestone 4 test. In the app, the window was checked in light and dark mode, but adding a folder through it hasn't been tried, and ad-hoc debug builds will ask again for removable volume access.
+**Not verified:** a rescan of real changes on the T7 Touch, because it stayed read-only, so that's shown on disk images only. Also a remount of the T7 Touch, and a refusal of the drive when it's really mounted writable, which is covered by a unit test only. In the app, the window was checked in light and dark mode, but adding a folder through it hasn't been tried, and ad-hoc debug builds will ask again for removable volume access.
 
-For now `LibraryIndexer` refuses any writable external volume, in the app too, so that a bug can't damage a drive before writes have been ruled out on real media. Milestone 4 should lift this, because a normal external drive is mounted writable.
+At this point `LibraryIndexer` refused any writable external volume, in the app too. Milestone 4 lifted that for the app only: see [Decisions](#decisions).
 
 ## Distribution
 
@@ -675,4 +796,4 @@ Check model licenses before distributing. InsightFace's pretrained models are no
 | First-time indexing takes tens of minutes | Priority scheduling, resumable stages, visible tiles first, one read per file |
 | A slower link caps throughput | The T7 Touch linked at USB 2 speed on one connection. Worth showing in the UI if indexing is slow |
 | Thumbnail cache grows too large | Size limit, with two-tier eviction |
-| Drive removed during a read | No mapped reads, cancellation, physical drive-pull tests |
+| Drive removed during a read | No mapped reads, cancellation, forced detach of exFAT disk images and injected I/O failures. Real USB delays stay unmeasured, so errors and stalls must be handled by design |

@@ -3,12 +3,13 @@ internal import GRDB
 /// Schema migrations. Migrations that have shipped are immutable, because user libraries must survive
 /// upgrades: to change the schema, add a new one. `SchemaSnapshotTests` fails if an old one is edited.
 enum LibraryMigrations {
-    static let current = "v2"
+    static let current = "v3"
 
     static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
         migrator.registerMigration("v1") { db in try db.execute(sql: v1) }
         migrator.registerMigration("v2") { db in try db.execute(sql: v2) }
+        migrator.registerMigration("v3") { db in try db.execute(sql: v3) }
         return migrator
     }
 
@@ -156,5 +157,17 @@ enum LibraryMigrations {
             PRIMARY KEY (asset_id, tier)
         ) WITHOUT ROWID;
         CREATE INDEX thumbnails_pack ON thumbnails(pack_id);
+        """
+
+    /// Session restore: the current item can be somewhere other than what's on screen, and the viewer
+    /// may have been open. `anchor_asset_id` stays what the view keeps on screen.
+    private static let v3 = """
+        ALTER TABLE sessions ADD COLUMN current_asset_id INTEGER REFERENCES assets(id) ON DELETE SET NULL;
+        -- How far down the viewport the anchor was, from 0 to 1, so that it doesn't depend on window size.
+        ALTER TABLE sessions ADD COLUMN anchor_position REAL;
+        ALTER TABLE sessions ADD COLUMN viewer_open INTEGER NOT NULL DEFAULT 0;
+        CREATE INDEX sessions_current ON sessions(current_asset_id);
+        -- The anchor was the current item when there was one, and nothing here says which it was.
+        UPDATE sessions SET current_asset_id = anchor_asset_id;
         """
 }
