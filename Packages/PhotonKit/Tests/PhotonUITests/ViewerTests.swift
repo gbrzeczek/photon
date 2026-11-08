@@ -392,7 +392,7 @@ struct ViewerTests {
 }
 
 /// Real files on a read-only exFAT image, the closest thing to the real drive that runs with no hardware.
-@Suite("The viewer with real files", .serialized)
+@Suite("The viewer with real files", .serialized, .usesDiskImages)
 @MainActor
 struct ViewerFilesTests {
     @MainActor

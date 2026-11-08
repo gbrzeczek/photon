@@ -42,7 +42,7 @@ struct AddFolderTests {
         return (library, model, view, window)
     }
 
-    @Test("A folder on a read-only exFAT volume is indexed, browsed and gets thumbnails, and the image stays unchanged")
+    @Test("A folder on a read-only exFAT volume is indexed, browsed and gets thumbnails, and the image stays unchanged", .usesDiskImages)
     func addFolderReadOnly() async throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: "photon-add-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -86,7 +86,7 @@ struct AddFolderTests {
         #expect(listed == ["media"])
     }
 
-    @Test("Offline, the stored thumbnails still show, and nothing fails")
+    @Test("Offline, the stored thumbnails still show, and nothing fails", .usesDiskImages)
     func offlineBrowsing() async throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: "photon-offline-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }

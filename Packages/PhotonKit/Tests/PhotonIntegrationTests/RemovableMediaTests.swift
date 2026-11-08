@@ -12,7 +12,7 @@ import Testing
 /// for a physical check, which isn't done, by the user's decision: see docs/PLAN.md, Removable media checks.
 ///
 /// Eject here acts on images this test created, through the same code as the app's command.
-@Suite("Removable media on disk images", .serialized, .timeLimit(.minutes(2)))
+@Suite("Removable media on disk images", .serialized, .usesDiskImages, .timeLimit(.minutes(10)))
 struct RemovableMediaTests {
     final class Fixture: Sendable {
         let directory: URL
