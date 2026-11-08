@@ -11,7 +11,7 @@ import Testing
 
 /// The browser through disconnecting and reconnecting, on exFAT images, with the system's real mount
 /// events. A forced detach stands in for a pulled cable: see docs/PLAN.md, Removable media checks.
-@Suite("Browsing across a disconnect", .serialized)
+@Suite("Browsing across a disconnect", .serialized, .timeLimit(.minutes(2)))
 @MainActor
 struct RemovableMediaBrowserTests {
     private func until(_ seconds: Double = 30, _ condition: () async throws -> Bool) async throws -> Bool {

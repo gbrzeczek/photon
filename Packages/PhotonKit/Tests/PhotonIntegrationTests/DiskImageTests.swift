@@ -10,7 +10,7 @@ import Testing
 /// Indexing on real exFAT volumes through FSKit, the same driver as the T7 Touch, with no real drive
 /// anywhere near it. A forced detach shows what a process sees when a cable is pulled, though not a real
 /// failure's delays. No physical pull is ever part of testing: see docs/PLAN.md, Removable media checks.
-@Suite("exFAT disk images", .serialized)
+@Suite("exFAT disk images", .serialized, .timeLimit(.minutes(2)))
 struct DiskImageTests {
     final class Fixture: Sendable {
         let directory: URL

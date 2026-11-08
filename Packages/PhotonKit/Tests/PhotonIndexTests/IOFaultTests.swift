@@ -10,7 +10,7 @@ private func fileName(_ name: String) -> RelativePath { RelativePath(directory: 
 
 /// Failures a disk image can't produce: a forced detach fails every read at once, while a real drive can
 /// stall, or fail reads while its mount still looks healthy. See docs/PLAN.md, Removable media checks.
-@Suite("Injected I/O failures")
+@Suite("Injected I/O failures", .timeLimit(.minutes(2)))
 struct IOFaultTests {
     /// Turns faults on and off during a run.
     final class Switch: Sendable {
