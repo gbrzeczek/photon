@@ -466,8 +466,10 @@ private struct ImageMenuItems: View {
 
     var body: some View {
         let hasItems = model.actionStateToken >= 0 && model.hasActionItems
+        // Period and Delete aren't bound here: a menu takes a key before a text field does, so typing a
+        // period or deleting in the search field would change the library. Grid, list and viewer handle
+        // them, and the context menu shows them.
         Button(model.actionItemsAreFavorites ? "Unfavorite" : "Favorite") { model.toggleFavorite() }
-            .keyboardShortcut(".", modifiers: [])
             .disabled(!hasItems)
         Menu("Add to Album") {
             ForEach(model.library.albums.filter { !$0.isSmart }) { album in
@@ -486,7 +488,6 @@ private struct ImageMenuItems: View {
         .disabled(!hasItems)
         if let album = model.currentManualAlbum {
             Button("Remove from “\(album.name)”") { model.removeFromAlbum() }
-                .keyboardShortcut(.delete, modifiers: [])
                 .disabled(!hasItems)
         }
         Button("Add Tag…") {

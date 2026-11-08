@@ -72,6 +72,7 @@ struct BrowserContentRepresentable: NSViewRepresentable {
         PerformanceHarness.attachIfRequested(to: view, model: model)
         DevelopmentHooks.scheduleSnapshot(of: view)
         DevelopmentHooks.scheduleViewer(model: model)
+        DevelopmentHooks.scheduleInspector(model: model)
         return view
     }
 

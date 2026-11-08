@@ -42,7 +42,7 @@ Start measurements from a shell, not with `open`: an unsigned build started by L
 
 `RemovableMediaUITests` needs `TEST_RUNNER_PHOTON_UITEST_REMOVABLE_LIBRARY`, a library made from an exFAT disk image, and `UITests/removable-media-helper.sh <image>` running in another terminal. Its header explains them.
 
-`PHOTON_VIEWER_ROW=<n>` opens the viewer on a row, for looking at it with `PHOTON_SNAPSHOT=<file>`. `FileTransferUITests` also needs `TEST_RUNNER_PHOTON_UITEST_FILES_LIBRARY` and `TEST_RUNNER_PHOTON_UITEST_DROP_FOLDER`, and its header explains them.
+`PHOTON_VIEWER_ROW=<n>` opens the viewer on a row, for looking at it with `PHOTON_SNAPSHOT=<file>`. `PHOTON_INSPECTOR=<n>` selects a row and shows the inspector, the same way. `OrganizationUITests` changes favorites in its library, so give it a seeded copy. With the screen locked, `PHOTON_RENDER_LIBRARY` and `PHOTON_RENDER_OUT` render the grid, sidebar and inspector offscreen in both appearances. `FileTransferUITests` also needs `TEST_RUNNER_PHOTON_UITEST_FILES_LIBRARY` and `TEST_RUNNER_PHOTON_UITEST_DROP_FOLDER`, and its header explains them.
 
 `photon-index scan` refuses an external volume unless it's mounted read-only, though the app reads one that is writable, and `generate` only writes to the internal disk or a disk image. Keep libraries built from a real drive out of this repository, because they contain real file names.
 

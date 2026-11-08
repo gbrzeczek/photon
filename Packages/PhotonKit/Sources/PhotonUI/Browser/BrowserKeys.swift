@@ -45,8 +45,8 @@ enum BrowserKeys {
             model.openViewer()
             return true
         }
-        // Matched by character, so it's the period key wherever a layout puts it. The menu usually
-        // takes it first.
+        // Matched by character, so it's the period key wherever a layout puts it. Not a menu shortcut,
+        // because a menu would take it from the search field too.
         if plain, !extending, event.charactersIgnoringModifiers == "." {
             model.toggleFavorite()
             return true

@@ -10,7 +10,8 @@ import UniformTypeIdentifiers
 /// is `left` for the left half of the main display, leaving room for a window to drop files on.
 /// `PHOTON_VIEWER_ROW` opens the viewer on a row after `PHOTON_VIEWER_DELAY` seconds, for looking at it
 /// without driving the app, `PHOTON_VIEWER_ZOOM` zooms in that many steps, and
-/// `PHOTON_VIEWER_SCROLL` that many wheel notches.
+/// `PHOTON_VIEWER_SCROLL` that many wheel notches. `PHOTON_INSPECTOR=<row>` selects that row and shows the
+/// inspector, for looking at it the same way.
 @MainActor
 enum DevelopmentHooks {
     static func applyAppearance() {
@@ -53,6 +54,15 @@ enum DevelopmentHooks {
                     model.viewer?.scrollForMeasuring(factor: 1.3)
                 }
             }
+        }
+    }
+
+    static func scheduleInspector(model: BrowserModel) {
+        guard let row = ProcessInfo.processInfo.environment["PHOTON_INSPECTOR"].flatMap(Int.init) else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak model] in
+            guard let model, row < model.itemCount else { return }
+            model.select(row: row)
+            if !model.isInspectorShown { model.toggleInspector() }
         }
     }
 

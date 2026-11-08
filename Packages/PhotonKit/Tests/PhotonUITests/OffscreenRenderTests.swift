@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import CoreImage
 import Foundation
 import ImageIO
@@ -18,6 +19,49 @@ import UniformTypeIdentifiers
 @MainActor
 struct OffscreenRenderTests {
     nonisolated private static let environment = ProcessInfo.processInfo.environment
+
+    @Test(
+        "Render the sidebar and inspector in both appearances",
+        .enabled(if: environment["PHOTON_RENDER_LIBRARY"] != nil))
+    func renderShell() async throws {
+        _ = NSApplication.shared
+        let library = URL(fileURLWithPath: try #require(Self.environment["PHOTON_RENDER_LIBRARY"]))
+        let output = URL(fileURLWithPath: try #require(Self.environment["PHOTON_RENDER_OUT"]))
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        let handle = try await Task.detached { try BrowserLibrary.open(url: library) }.value
+        let browserLibrary = BrowserLibrary(handle)
+        await browserLibrary.start()
+        let model = BrowserModel(library: browserLibrary)
+        _ = await model.restoreLastSession()
+        let first = try await browserLibrary.store.browse(.favorites, sort: .default).assetIDs.first
+        model.inspect(first.map(AssetID.init(rawValue:)), immediately: true)
+        for dark in [false, true] {
+            let root = HStack(spacing: 0) {
+                LibrarySidebar(library: browserLibrary, model: model) { _ in }.frame(width: 240)
+                Divider()
+                InspectorView(library: browserLibrary, model: model).frame(width: 300)
+            }
+            .frame(width: 541, height: 760)
+            let view = NSHostingView(rootView: root)
+            view.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+            let window = NSWindow(
+                contentRect: CGRect(x: 0, y: 0, width: 541, height: 760), styleMask: [.titled], backing: .buffered,
+                defer: false)
+            window.isReleasedWhenClosed = false
+            window.appearance = view.appearance
+            window.contentView = view
+            for _ in 0..<20 {
+                view.layoutSubtreeIfNeeded()
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            let data = try #require(bitmap.representation(using: .png, properties: [:]))
+            try data.write(to: output.appending(path: dark ? "shell-dark.png" : "shell-light.png"))
+            window.close()
+        }
+        browserLibrary.loader.stop()
+    }
 
     @Test(
         "Render the grid in both appearances and layouts",
