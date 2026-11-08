@@ -3,10 +3,11 @@ import PhotonCore
 import PhotonMedia
 
 private enum ListColumn: String, CaseIterable {
-    case name, date, size, type, duration
+    case favorite, name, date, size, type, duration
 
     var title: String {
         switch self {
+        case .favorite: ""
         case .name: "Name"
         case .date: "Date"
         case .size: "Size"
@@ -15,8 +16,9 @@ private enum ListColumn: String, CaseIterable {
         }
     }
 
-    var sortKey: SortKey {
+    var sortKey: SortKey? {
         switch self {
+        case .favorite: nil
         case .name: .name
         case .date: .date
         case .size: .size
@@ -27,6 +29,7 @@ private enum ListColumn: String, CaseIterable {
 
     var width: CGFloat {
         switch self {
+        case .favorite: 22
         case .name: 340
         case .date: 170
         case .size: 80
@@ -172,8 +175,14 @@ final class BrowserListView: NSView, BrowserContent, NSTableViewDataSource, NSTa
             let tableColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(column.rawValue))
             tableColumn.title = column.title
             tableColumn.width = column.width
-            tableColumn.sortDescriptorPrototype = NSSortDescriptor(
-                key: column.sortKey.rawValue, ascending: column.sortKey.defaultAscending)
+            if let key = column.sortKey {
+                tableColumn.sortDescriptorPrototype = NSSortDescriptor(key: key.rawValue, ascending: key.defaultAscending)
+            } else {
+                // A heart, like Photos' list, for favorites.
+                tableColumn.minWidth = column.width
+                tableColumn.maxWidth = column.width
+                tableColumn.headerToolTip = "Favorite"
+            }
             table.addTableColumn(tableColumn)
         }
 
@@ -403,6 +412,9 @@ final class BrowserListView: NSView, BrowserContent, NSTableViewDataSource, NSTa
             ?? makeCell(column, identifier: tableColumn.identifier)
         let loaded = model.pages.row(row)
         switch column {
+        case .favorite:
+            cell.label.attributedStringValue =
+                result.flags[row].contains(.favorite) ? Self.heart : NSAttributedString(string: "")
         case .name:
             cell.label.stringValue = loaded?.path.name ?? ""
             configureThumbnail(cell, row: row)
@@ -418,6 +430,15 @@ final class BrowserListView: NSView, BrowserContent, NSTableViewDataSource, NSTa
         }
         return cell
     }
+
+    private static let heart: NSAttributedString = {
+        let attachment = NSTextAttachment()
+        attachment.image = NSImage(systemSymbolName: "heart.fill", accessibilityDescription: "Favorite")?
+            .withSymbolConfiguration(.init(pointSize: 10, weight: .regular))
+        let string = NSMutableAttributedString(attachment: attachment)
+        string.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: NSRange(location: 0, length: string.length))
+        return string
+    }()
 
     private func makeCell(_ column: ListColumn, identifier: NSUserInterfaceItemIdentifier) -> ListCell {
         let isNumeric = column == .size || column == .duration

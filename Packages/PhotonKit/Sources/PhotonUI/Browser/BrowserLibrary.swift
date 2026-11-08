@@ -11,6 +11,9 @@ import PhotonMedia
 @Observable
 public final class BrowserLibrary {
     public private(set) var folders: [BrowseFolder] = []
+    /// Manual and smart albums, by name, for the sidebar and the Add to Album menu.
+    public private(set) var albums: [Album] = []
+    public private(set) var tags: [Tag] = []
     public private(set) var volumes: [VolumeSummary] = []
     public private(set) var onlineVolumes: Set<VolumeID> = []
     /// What can be done with each online volume's files. Anything not here is offline.
@@ -221,9 +224,34 @@ public final class BrowserLibrary {
             if summaries != volumes { volumes = summaries }
             let found = try await store.folders()
             if found != folders { folders = found }
+            await refreshOrganization()
         } catch {
             lastError = error.localizedDescription
         }
+    }
+
+    /// Albums and tags, after a change to them.
+    public func refreshOrganization() async {
+        let foundAlbums = (try? await store.albums()) ?? albums
+        if foundAlbums != albums { albums = foundAlbums }
+        let foundTags = (try? await store.tags()) ?? tags
+        if foundTags != tags { tags = foundTags }
+    }
+
+    /// Whether a source still exists. An offline folder is still in the library.
+    public func contains(_ source: BrowseSource) -> Bool {
+        switch source {
+        case .folder(let scope): folders.contains { $0.volume == scope.volume && $0.path == scope.path }
+        case .allItems, .favorites: true
+        case .album(let id): albums.contains { $0.id == id }
+        case .tag(let id): tags.contains { $0.id == id }
+        }
+    }
+
+    public func createAlbum(named name: String, query: SmartQuery? = nil) async throws -> AlbumID {
+        let album = try await store.createAlbum(name: name, query: query)
+        await refreshOrganization()
+        return album
     }
 
     public func addFolder(_ folder: URL) {

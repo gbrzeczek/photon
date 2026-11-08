@@ -65,7 +65,25 @@ protocol BrowserContent: AnyObject {
 @MainActor
 @Observable
 public final class BrowserModel {
-    public private(set) var scope: BrowseScope?
+    /// What's showing: a folder, an album, a tag, or the library's own rows.
+    public private(set) var source: BrowseSource?
+    /// The folder showing, if the source is one.
+    public var scope: BrowseScope? { source?.folder }
+    /// The search field's words, which filter the source. Cleared when the source changes.
+    public internal(set) var search = ""
+    /// Every member of a stack as its own tile, instead of the cover alone.
+    public internal(set) var expandsStacks = false
+    /// The inspector column at the trailing edge.
+    public var isInspectorShown = false
+    /// The asset the inspector describes: the photo in the viewer, or else the current item.
+    /// Waits for a held key, like the status bar.
+    public internal(set) var inspectedAsset: AssetID?
+    /// Bumped when organization data changes, so that the inspector reads it again.
+    public internal(set) var organizationVersion = 0
+    /// The smart album sheet, for a new album or one to edit.
+    var smartAlbumRequest: SmartAlbumRequest?
+    /// Asks the search field to take focus. Bumped by Command-F.
+    public internal(set) var searchFocusRequest = 0
     public private(set) var sort = BrowseSort.default
     public private(set) var viewMode = BrowserViewMode.tiles
     public private(set) var tileSize = Double(TileMetrics.defaultTile)
@@ -91,6 +109,7 @@ public final class BrowserModel {
     @ObservationIgnored var copyTask: Task<Void, Never>?
     @ObservationIgnored var noticeTask: Task<Void, Never>?
     @ObservationIgnored var captionTask: Task<Void, Never>?
+    @ObservationIgnored var inspectTask: Task<Void, Never>?
     @ObservationIgnored let fileDrag = FileDragController()
     @ObservationIgnored private var list: (any BrowserContent)?
     @ObservationIgnored private var showMode: ((BrowserViewMode) -> Void)?
@@ -165,23 +184,25 @@ public final class BrowserModel {
     /// The saved folder may have gone while the app was closed, and an empty view isn't a useful place
     /// to come back to. An offline folder is still in the library, so it stays.
     public func leaveVanishedFolder() {
-        guard let scope, !library.folders.isEmpty else { return }
-        let exists = library.folders.contains { $0.volume == scope.volume && $0.path == scope.path }
-        if !exists { openFirstFolder() }
+        guard let source, !library.folders.isEmpty else { return }
+        if !library.contains(source) { openFirstFolder() }
     }
 
     public func openFirstFolder() {
         if let first = library.folders.first { open(BrowseScope(volume: first.volume, path: first.path)) }
     }
 
-    public func open(_ scope: BrowseScope) {
-        guard scope != self.scope else { return }
+    public func open(_ scope: BrowseScope) { open(.folder(scope)) }
+
+    public func open(_ source: BrowseSource) {
+        guard source != self.source else { return }
         closeViewer(animated: false)
         flushSession()
         Task {
-            let session = try? await library.store.session(for: scope)
+            let session = try? await library.store.session(for: source)
             guard let session else {
-                self.scope = scope
+                self.source = source
+                self.search = ""
                 self.selection.reset()
                 self.reload(keepPosition: false)
                 return
@@ -192,7 +213,8 @@ public final class BrowserModel {
 
     private func apply(_ session: BrowseSession) {
         closeViewer(animated: false)
-        scope = session.scope
+        source = session.source
+        search = ""
         sort = session.sort
         viewMode = BrowserViewMode(rawValue: session.viewMode) ?? .tiles
         showMode?(viewMode)
@@ -226,7 +248,7 @@ public final class BrowserModel {
     /// Runs the query and the layout pass off the main thread, then installs them together, keeping
     /// the anchor where it is. Nothing main-thread here grows with the library.
     func reload(keepPosition: Bool, restoring place: RestoredPlace? = nil) {
-        guard let scope else { return }
+        guard let source else { return }
         generation += 1
         let generation = generation
         reloadTask?.cancel()
@@ -240,11 +262,14 @@ public final class BrowserModel {
         let mode = layoutMode
         let width = layoutWidth
         let tile = CGFloat(tileSize)
+        let options = BrowseOptions(
+            search: search, expandsStacks: expandsStacks, preferredVolumes: library.onlineVolumes)
 
         reloadTask = Task.detached(priority: .userInitiated) { [weak self] in
             let interval = Self.signposter.beginInterval("Query")
             defer { Self.signposter.endInterval("Query", interval) }
-            guard let result = try? await store.browse(scope, sort: sort), !Task.isCancelled else { return }
+            guard let result = try? await store.browse(source, sort: sort, options: options), !Task.isCancelled
+            else { return }
             let prefix = TileLayout.prefixSums(result.aspects)
             let rows: AspectRows? = mode == .aspect && width > 1
                 ? AspectRows.compute(
@@ -317,6 +342,7 @@ public final class BrowserModel {
             // After this pass, once the tile it flies from is on screen.
             if current != nil { DispatchQueue.main.async { [weak self] in self?.openViewer() } }
         }
+        if !isViewerOpen { inspect(asset) }
         onResult?(next.count)
     }
 
@@ -332,7 +358,7 @@ public final class BrowserModel {
     }
 
     private func contentChanged() {
-        guard scope != nil else {
+        guard source != nil else {
             // The first folder just arrived, so there's something to show.
             openFirstFolder()
             return
@@ -350,17 +376,24 @@ public final class BrowserModel {
     /// The rows are the same, but what can be read isn't. A volume coming back should fill in what
     /// couldn't be read, without moving anything.
     private func volumesChanged() {
-        guard scope != nil else {
+        guard let source else {
             openFirstFolder()
             return
         }
+        // A source spanning volumes prefers files on online ones, so its rows may now come from another.
+        if source.folder == nil { reload(keepPosition: true) }
         active?.retryThumbnails()
         viewer?.volumesDidChange()
     }
 
     /// What can be done with the files showing now.
     public var scopeAccess: VolumeAccess {
-        scope.flatMap { library.volumeAccess[$0.volume] } ?? .offline
+        guard let source else { return .offline }
+        guard let scope = source.folder else {
+            // Rows come from many volumes, and each prefers one that's online.
+            return library.onlineVolumes.isEmpty ? .offline : .readOnly
+        }
+        return library.volumeAccess[scope.volume] ?? .offline
     }
 
     /// The name of the volume showing now.
@@ -488,6 +521,7 @@ public final class BrowserModel {
         grid?.selectionDidChange()
         list?.selectionDidChange()
         saveSessionSoon()
+        inspect(selection.currentAsset)
     }
 
     /// Jumps to a typed name, in the list. Letters typed within a second build up one name.
@@ -496,13 +530,13 @@ public final class BrowserModel {
         if now - typedAt > .seconds(1) { typedName = "" }
         typedAt = now
         typedName += characters
-        guard let scope else { return }
+        guard let source else { return }
         let prefix = typedName
         let store = library.store
         let result = result
         Task {
             let row = await Task.detached(priority: .userInitiated) { () -> Int? in
-                guard let found = try? await store.instances(in: scope, namePrefix: prefix, limit: 64) else {
+                guard let found = try? await store.instances(in: source, namePrefix: prefix, limit: 64) else {
                     return nil
                 }
                 let wanted = Set(found)
@@ -552,13 +586,13 @@ public final class BrowserModel {
     }
 
     private func currentSession() -> BrowseSession? {
-        guard let scope else { return nil }
+        guard let source else { return nil }
         // What's on screen and what's current can be far apart, and both are part of your place.
         let seen = active?.captureAnchor()
         let anchor = seen.flatMap { $0.row < result.count ? AssetID(rawValue: result.assetIDs[$0.row]) : nil }
         let height = active?.anchorViewportHeight ?? 0
         return BrowseSession(
-            scope: scope, sort: sort, viewMode: viewMode.rawValue, tileSize: tileSize,
+            source: source, sort: sort, viewMode: viewMode.rawValue, tileSize: tileSize,
             anchor: anchor ?? selection.currentAsset,
             anchorPosition: seen.flatMap { height > 0 ? min(max(Double($0.screenY / height), 0), 1) : nil },
             current: selection.currentAsset, isViewerOpen: isViewerOpen)
