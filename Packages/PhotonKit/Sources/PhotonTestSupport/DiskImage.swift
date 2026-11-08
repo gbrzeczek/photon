@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 public enum DiskImageError: Error, CustomStringConvertible {
     case commandFailed(String)
@@ -29,8 +30,25 @@ public final class DiskImage: @unchecked Sendable {
         let url = directory.appending(path: name + ".dmg", directoryHint: .notDirectory)
         var arguments = ["create", "-quiet", "-size", "\(megabytes)m", "-fs", filesystem, "-volname", label]
         if filesystem != "APFS" { arguments += ["-layout", "MBRSPUD"] }
-        try run("/usr/bin/hdiutil", arguments + [url.path])
+        if filesystem == "APFS" {
+            try run("/usr/bin/hdiutil", arguments + [url.path])
+        } else {
+            try inASecondOfItsOwn { _ = try run("/usr/bin/hdiutil", arguments + [url.path]) }
+        }
         return DiskImage(url: url)
+    }
+
+    /// exFAT and FAT take their serial, and so their UUID, from the clock, so two images made in one
+    /// second look like clones. Suites run in parallel, so every image made in this process gets
+    /// seconds of its own. A real clone comes from `clone(to:)` instead.
+    private static let lastCreation = Mutex<Int>(0)
+
+    private static func inASecondOfItsOwn(_ body: () throws -> Void) throws {
+        try lastCreation.withLock { last in
+            while Int(Date().timeIntervalSince1970) <= last { Thread.sleep(forTimeInterval: 0.05) }
+            defer { last = Int(Date().timeIntervalSince1970) }
+            try body()
+        }
     }
 
     /// A byte-for-byte copy, which has the same UUID and file IDs as the original.

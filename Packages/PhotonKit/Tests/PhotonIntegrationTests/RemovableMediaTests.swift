@@ -256,7 +256,7 @@ struct RemovableMediaTests {
         let report = try await indexer.connectKnownVolumes()
 
         #expect(report.connections.count == 1)
-        // exFAT's serial comes from the clock, so an image from another suite can share this UUID.
+        // Images get seconds of their own, but contains keeps this about the pair, not the rest of the run.
         #expect(report.duplicateNames.contains("PHOTONPAIR"))
         #expect(try await fixture.store.allVolumes().count == 1)
     }
