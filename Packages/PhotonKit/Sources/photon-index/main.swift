@@ -3,6 +3,7 @@ import Foundation
 import PhotonCore
 import PhotonIndex
 import PhotonMedia
+import PhotonVideo
 import PhotonTestSupport
 
 // A development tool for measuring indexing outside the app. It prints counts only, never file names,
@@ -14,13 +15,15 @@ let usage = """
       photon-index status [--database <file>]
       photon-index mount-info <folder>
       photon-index generate <folder> [--count <n>] [--average-bytes <n>] [--seed <n>]
+      photon-index videos <folder> [--seconds <n>] [--width <n>] [--height <n>]
       photon-index thumbnails <folder> [--database <file>] [--json <file>]
       photon-index seed --database <file> [--count <n>] [--seed <n>]
 
     thumbnails makes every thumbnail for a folder that has been scanned, reading it the way scan does.
     seed writes a library with no real files, for measuring the grid. Its volume is always offline.
     scan refuses an external volume unless it's mounted read-only.
-    generate only writes to the internal disk or a disk image.
+    videos writes the format test set: one real, playable clip per format AVFoundation writes.
+    generate and videos only write to the internal disk or a disk image.
     """
 
 func fail(_ message: String) -> Never {
@@ -127,6 +130,21 @@ func runGenerate(path: String) throws {
             + "\(manifest.duplicates) duplicates, \(manifest.bytes) bytes")
 }
 
+func runVideos(path: String) async throws {
+    let root = URL(fileURLWithPath: path)
+    try SyntheticLibrary.ensureSafeLocation(root)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    var options = SyntheticVideo.Options()
+    options.seconds = option("--seconds").flatMap(Double.init) ?? 10
+    options.width = option("--width").flatMap(Int.init) ?? 1280
+    options.height = option("--height").flatMap(Int.init) ?? 720
+    for format in SyntheticVideo.Format.avFoundationSet {
+        let name = "\(format.codec.rawValue)-\(format.fileExtension).\(format.fileExtension)"
+        try await SyntheticVideo.write(to: root.appending(path: name), format: format, options: options)
+    }
+    print("\(SyntheticVideo.Format.avFoundationSet.count) videos")
+}
+
 func runThumbnails(path: String) async throws {
     let mount = try MountedVolume.containing(path: path).volume
     if let reason = MountPolicy.refusalReason(for: mount) { fail("Refused: \(reason)") }
@@ -139,7 +157,8 @@ func runThumbnails(path: String) async throws {
         didUnmount: { indexer.volumeDidUnmount(mountPoint: $0) })
     let volume = try await indexer.connect(mount: mount)
     let packs = ThumbnailPackStore(store: store)
-    let generator = ThumbnailGenerator(store: store, packs: packs, scheduler: { indexer.scheduler(for: $0) })
+    let generator = ThumbnailGenerator(
+        store: store, packs: packs, scheduler: { indexer.scheduler(for: $0) }, video: AVFoundationThumbnailer())
 
     let run = Task { try await generator.runBackground(volume: volume) }
     signal(SIGINT, SIG_IGN)
@@ -178,6 +197,7 @@ do {
     case ("status", _): try await runStatus()
     case ("mount-info", let path?): try runMountInfo(path: path)
     case ("generate", let path?): try runGenerate(path: path)
+    case ("videos", let path?): try await runVideos(path: path)
     case ("thumbnails", let path?): try await runThumbnails(path: path)
     case ("seed", _): try await runSeed()
     default: fail(usage)

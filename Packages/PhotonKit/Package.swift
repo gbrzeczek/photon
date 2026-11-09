@@ -28,7 +28,7 @@ let package = Package(
         .target(name: "PhotonTestSupport", dependencies: ["PhotonCore", "PhotonIndex"]),
         .executableTarget(
             name: "photon-index",
-            dependencies: ["PhotonCore", "PhotonIndex", "PhotonMedia", "PhotonTestSupport"]),
+            dependencies: ["PhotonCore", "PhotonIndex", "PhotonMedia", "PhotonVideo", "PhotonTestSupport"]),
 
         .testTarget(
             name: "PhotonCoreTests",
@@ -36,9 +36,10 @@ let package = Package(
             resources: [.copy("Fixtures")]),
         .testTarget(name: "PhotonIndexTests", dependencies: ["PhotonIndex", "PhotonTestSupport"]),
         .testTarget(name: "PhotonMediaTests", dependencies: ["PhotonMedia", "PhotonTestSupport"]),
+        .testTarget(name: "PhotonVideoTests", dependencies: ["PhotonVideo", "PhotonTestSupport"]),
         .testTarget(name: "PhotonUITests", dependencies: ["PhotonUI", "PhotonTestSupport"]),
         .testTarget(
             name: "PhotonIntegrationTests",
-            dependencies: ["PhotonCore", "PhotonIndex", "PhotonMedia", "PhotonTestSupport"]),
+            dependencies: ["PhotonCore", "PhotonIndex", "PhotonMedia", "PhotonVideo", "PhotonTestSupport"]),
     ]
 )

@@ -2,6 +2,7 @@ import AppKit
 import PhotonCore
 import PhotonIndex
 import PhotonMedia
+import PhotonVideo
 import QuartzCore
 import os
 
@@ -33,7 +34,7 @@ protocol ViewerHost: AnyObject {
     var viewerWaitingText: String { get }
 }
 
-/// The photo viewer: an overlay above the grid and list, which stay alive underneath.
+/// The photo and video viewer: an overlay above the grid and list, which stay alive underneath.
 ///
 /// The picture is one layer, whose contents move through the thumbnail, the preview and full resolution
 /// without changing its geometry. Everything that moves here moves by assigning a frame, and the two
@@ -48,6 +49,9 @@ final class ViewerView: NSView, NSDraggingSource {
     private let videoSymbol = PlainLayer()
     private let flightClip = PlainLayer()
     private let flightPicture = PlainLayer()
+    /// The video showing, when it is one. Its layer sits above `picture`, which keeps the thumbnail.
+    private(set) var video: ViewerVideo!
+    private var pointerArea: NSTrackingArea?
 
     private(set) var isOpen = false
     /// Between Escape and the last frame of the flight back.
@@ -100,7 +104,11 @@ final class ViewerView: NSView, NSDraggingSource {
     var sharpObserver: ((Double) -> Void)?
     private var arrivedAt: UInt64 = 0
 
-    init(thumbnails: ThumbnailLoader, images: ViewerImageLoader) {
+    /// - Parameter videoSource: Where a video's file is, or nil while its volume is offline.
+    init(
+        thumbnails: ThumbnailLoader, images: ViewerImageLoader, videos: VideoEngines = .standard,
+        videoSource: @escaping ViewerVideo.SourceLookup = { _ in nil }
+    ) {
         self.thumbnails = thumbnails
         self.images = images
         super.init(frame: .zero)
@@ -124,6 +132,8 @@ final class ViewerView: NSView, NSDraggingSource {
         flightPicture.contentsGravity = .resize
         flightClip.addSublayer(flightPicture)
         layer?.addSublayer(flightClip)
+        video = ViewerVideo(engines: videos, lookup: videoSource, in: self, above: picture)
+        video.onChange = { [weak self] in self?.applyStatus() }
 
         setAccessibilityElement(true)
         setAccessibilityRole(.image)
@@ -165,6 +175,21 @@ final class ViewerView: NSView, NSDraggingSource {
             geometry.clampCenter()
             placePicture()
         }
+        video.layoutControls(in: bounds)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let pointerArea { removeTrackingArea(pointerArea) }
+        let area = NSTrackingArea(
+            rect: .zero, options: [.mouseMoved, .activeInKeyWindow, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        pointerArea = area
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        guard isOpen, isVideo else { return }
+        video.pointerMoved()
     }
 
     /// A larger viewer needs a larger preview, which keeps the bytes it was made from if it can.
@@ -184,7 +209,7 @@ final class ViewerView: NSView, NSDraggingSource {
         artwork.reset()
         withoutAnimation {
             applyBackdropColor()
-            if isOpen, isVideo { showVideoSymbol() }
+            if isOpen, isVideo, shownSurface == nil { showVideoSymbol() }
         }
     }
 
@@ -222,7 +247,7 @@ final class ViewerView: NSView, NSDraggingSource {
     }
 
     private func startOpeningTransition(from tile: CGRect?) {
-        guard let tile, !reducesMotion, !isVideo, let surface = shownSurface else {
+        guard let tile, !reducesMotion, let surface = shownSurface else {
             fade(backdrop, from: 0, to: 1)
             fade(picture, from: 0, to: 1)
             fade(videoSymbol, from: 0, to: 1)
@@ -271,7 +296,7 @@ final class ViewerView: NSView, NSDraggingSource {
             backdrop.removeAllAnimations()
             flightClip.isHidden = true
             flightPicture.contents = nil
-            picture.isHidden = isVideo
+            picture.isHidden = false
         }
     }
 
@@ -284,8 +309,10 @@ final class ViewerView: NSView, NSDraggingSource {
         settleTask?.cancel()
         fullTask?.cancel()
         images.focus(current: nil, neighbors: [], wantsFull: false)
+        // The flight back carries the thumbnail, as the flight in did.
+        video.stop()
 
-        guard animated, !reducesMotion, !isVideo, shownSurface != nil, let tile else {
+        guard animated, !reducesMotion, shownSurface != nil, let tile else {
             guard animated else {
                 finishClosing()
                 return
@@ -413,6 +440,7 @@ final class ViewerView: NSView, NSDraggingSource {
         arrivedAt = start
         neighborDirection = direction >= 0 ? 1 : -1
         if let previous, previous != next { thumbnails.cancel(previous.asset) }
+        if video.asset != next.asset { video.stop() }
         isVideo = result.flags[row].contains(.video)
         item = next
         shownSurface = nil
@@ -422,18 +450,16 @@ final class ViewerView: NSView, NSDraggingSource {
             geometry.zoom = 1
             geometry.center = CGPoint(x: 0.5, y: 0.5)
             geometry.imageSize = placeholderSize(row: row, result: result)
-            if isVideo {
-                showVideoSymbol()
-            } else {
-                videoSymbol.contents = nil
-                picture.isHidden = isFlying
-            }
+            videoSymbol.contents = nil
+            picture.isHidden = isFlying
             refreshPicture()
             if shownSurface == nil { picture.contents = nil }
+            // A video with no frame yet, or none for its format, shows the film symbol.
+            if isVideo, shownSurface == nil { showVideoSymbol() }
             placePicture()
         }
 
-        if !isVideo { requestThumbnail(next) }
+        requestThumbnail(next)
         updateAccessibility()
         settleTask?.cancel()
         fullTask?.cancel()
@@ -467,6 +493,11 @@ final class ViewerView: NSView, NSDraggingSource {
         startWaitingForDisk()
         host?.viewerStatusDidChange(statusText)
         host?.viewerDidSettle(row: row)
+        if isVideo, let item, let result = host?.viewerResult, row < result.count {
+            video.start(
+                asset: item.asset, instance: item.instance, aspect: CGFloat(result.aspects[row]),
+                autoplay: autoplaysVideos)
+        }
         requestImages(wantsFull: false)
         fullTask = Task { [weak self] in
             try? await Task.sleep(for: Self.fullDelay)
@@ -527,13 +558,13 @@ final class ViewerView: NSView, NSDraggingSource {
     }
 
     func thumbnailsReady() {
-        guard isOpen, !isVideo, shownTier < .preview else { return }
+        guard isOpen, shownTier < .preview else { return }
         refreshPicture()
     }
 
     /// Shows the best image in memory for this zoom. Assigning it is all the main thread does.
     private func refreshPicture() {
-        guard let item, !isVideo else { return }
+        guard let item else { return }
         let found = images.images(for: item.asset)
         var choice: (surface: IOSurface, tier: ShownTier, size: CGSize)?
         if let preview = found.preview {
@@ -550,6 +581,7 @@ final class ViewerView: NSView, NSDraggingSource {
         }
         withoutAnimation {
             if let shownSurface { ViewerImageLoader.releaseLater(UncheckedSurface(surface: shownSurface)) }
+            videoSymbol.contents = nil
             picture.contents = choice.surface
             shownSurface = choice.surface
             shownTier = choice.tier
@@ -567,7 +599,6 @@ final class ViewerView: NSView, NSDraggingSource {
     }
 
     private func showVideoSymbol() {
-        picture.isHidden = true
         videoSymbol.contents = artwork.videoPlaceholder(appearance: effectiveAppearance)
         videoSymbol.contentsScale = scale
         videoSymbol.frame = bounds
@@ -579,6 +610,7 @@ final class ViewerView: NSView, NSDraggingSource {
         let placed = geometry.isZoomedIn ? frame : backingAlignedRect(frame, options: .alignAllEdgesNearest)
         picture.frame = frame.width > 0 ? placed : .zero
         picture.backgroundColor = shownSurface == nil ? placeholderColor : nil
+        video.place(frame: picture.frame)
     }
 
     private var placeholderColor: CGColor? {
@@ -619,7 +651,10 @@ final class ViewerView: NSView, NSDraggingSource {
     private var statusText: String {
         guard let host else { return "" }
         let position = "\(row + 1) of \(host.viewerResult.count)"
-        if isVideo { return "\(position)  ·  \(TileArtwork.format(Int(host.viewerResult.durations[row])))" }
+        if isVideo {
+            let duration = "\(position)  ·  \(TileArtwork.format(Int(host.viewerResult.durations[row])))"
+            return video.problem.map { "\(duration)  ·  \($0)" } ?? duration
+        }
         if isWaitingLong { return "\(position)  ·  \(host.viewerWaitingText)" }
         guard !isVideo, geometry.imageSize != .zero, shownTier >= .preview else { return position }
         let found = item.map { images.images(for: $0.asset) }
@@ -723,6 +758,7 @@ final class ViewerView: NSView, NSDraggingSource {
         window?.makeFirstResponder(self)
         let point = convert(event.locationInWindow, from: nil)
         if event.clickCount == 2 {
+            guard !isVideo else { return }
             setZoom(geometry.toggledZoom, keeping: point, animated: true)
             return
         }
@@ -744,12 +780,14 @@ final class ViewerView: NSView, NSDraggingSource {
             }
             pan?.last = point
         } else if let press = dragPress, hypot(point.x - press.x, point.y - press.y) >= 4 {
-            let frame = isVideo ? CGRect(x: press.x - 32, y: press.y - 32, width: 64, height: 64) : geometry.frame
+            let frame = shownSurface == nil ? CGRect(x: press.x - 32, y: press.y - 32, width: 64, height: 64) : geometry.frame
             host?.viewerBeginDrag(event: event, frame: frame, contents: shownSurface ?? videoSymbol.contents)
         }
     }
 
     override func mouseUp(with event: NSEvent) {
+        // A click on a video that didn't become a drag plays or pauses it, as in QuickTime Player.
+        if isVideo, dragPress != nil, event.clickCount == 1 { video.togglePlay() }
         dragPress = nil
         if pan != nil {
             pan = nil
@@ -830,6 +868,9 @@ final class ViewerView: NSView, NSDraggingSource {
     var isEasingZoomForTesting: Bool { scrollZoom != nil }
     /// Tests can't rely on the machine's setting. The hosted CI runners have Reduce Motion on.
     var reducesMotionForTesting: Bool?
+    /// Whether a video starts playing once the viewer settles on it. Tests turn it off.
+    var autoplaysVideos = true
+    var isShowingVideo: Bool { isOpen && isVideo }
     /// Runs a scroll's zoom out, since a test window has no display to drive it.
     func finishScrollZoomForTesting() {
         var time = 0.0

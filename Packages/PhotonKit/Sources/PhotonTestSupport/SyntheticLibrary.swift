@@ -122,7 +122,7 @@ public struct SyntheticLibrary: Sendable {
     }
 
     /// Checks the nearest existing ancestor, before anything has been created.
-    static func ensureSafeLocation(_ root: URL) throws {
+    public static func ensureSafeLocation(_ root: URL) throws {
         var candidate = root.standardizedFileURL
         while !FileManager.default.fileExists(atPath: candidate.path), candidate.path != "/" {
             candidate = candidate.deletingLastPathComponent()

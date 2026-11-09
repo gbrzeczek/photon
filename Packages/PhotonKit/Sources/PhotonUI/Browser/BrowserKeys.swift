@@ -76,13 +76,14 @@ enum ViewerKeys {
             model.closeViewer()
             return true
         }
+        if let video = model.viewerVideo, handleVideo(event, flags: flags, video: video) { return true }
         guard flags.isEmpty else { return false }
         if event.charactersIgnoringModifiers == "." {
             model.toggleFavorite()
             return true
         }
         if event.charactersIgnoringModifiers == " " {
-            // Space is a quick look toggle. For a video it'll play and pause, once videos play.
+            // A quick look toggle for a photo. A video plays and pauses, and Escape closes it.
             model.closeViewer()
             return true
         }
@@ -96,6 +97,33 @@ enum ViewerKeys {
         case .downArrow: _ = model.panViewer(dx: 0, dy: -1)
         case .home: model.stepViewer(to: 0)
         case .end: model.stepViewer(to: model.result.count - 1)
+        default: return false
+        }
+        return true
+    }
+
+    /// The video rows of the table. Letters are matched by character, like Period.
+    private static func handleVideo(_ event: NSEvent, flags: NSEvent.ModifierFlags, video: ViewerVideo) -> Bool {
+        let direction: Int? = switch event.specialKey {
+        case .leftArrow: -1
+        case .rightArrow: 1
+        default: nil
+        }
+        if let direction, flags == .shift {
+            video.seek(by: Double(direction) * 5)
+            return true
+        }
+        if let direction, flags == .option {
+            video.step(frames: direction)
+            return true
+        }
+        guard flags.isEmpty, !event.isARepeat || event.charactersIgnoringModifiers != " " else { return false }
+        switch event.charactersIgnoringModifiers?.lowercased() {
+        case " ": video.togglePlay()
+        case "j": video.shuttle(forward: false)
+        case "k": video.pause()
+        case "l": video.shuttle(forward: true)
+        case "m": video.toggleMute()
         default: return false
         }
         return true

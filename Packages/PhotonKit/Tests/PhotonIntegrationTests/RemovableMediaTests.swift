@@ -27,11 +27,14 @@ struct RemovableMediaTests {
 
         deinit { try? FileManager.default.removeItem(at: directory) }
 
-        func image(name: String = "image", label: String, count: Int) throws -> DiskImage {
+        func image(name: String = "image", label: String, count: Int, videos: Bool = true) throws -> DiskImage {
             let image = try DiskImage.create(in: directory, name: name, label: label, megabytes: 64)
             let mount = try image.attach()
             var options = SyntheticLibrary.Options()
             options.fileCount = count
+            // The library's videos are headers with no frames, which only a generator without video
+            // thumbnails leaves alone.
+            if !videos { options.videoInterval = 0 }
             options.duplicateInterval = 0
             options.filesPerFolder = 50
             _ = try SyntheticLibrary(options: options).generate(at: URL(fileURLWithPath: mount))
@@ -290,7 +293,7 @@ struct RemovableMediaTests {
     @Test("Thumbnails stop calmly at a forced detach, marking nothing as failed, and finish after a reattach")
     func thumbnailsAcrossDetach() async throws {
         let fixture = try Fixture()
-        let image = try fixture.image(label: "PHOTONTHMB", count: 120)
+        let image = try fixture.image(label: "PHOTONTHMB", count: 120, videos: false)
         defer { image.ensureDetached() }
         let mountPoint = try image.attach(readOnly: true)
         let store = fixture.store

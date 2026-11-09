@@ -18,9 +18,11 @@ final class BrowserContainerView: NSView {
         grid = TileGridView(model: model)
         list = BrowserListView(model: model)
         let originals = model.library.originals
+        let library = model.library
         viewer = ViewerView(
-            thumbnails: model.library.loader,
-            images: ViewerImageLoader(read: { try await originals.read($0, priority: $1) }))
+            thumbnails: library.loader,
+            images: ViewerImageLoader(read: { try await originals.read($0, priority: $1) }),
+            videos: library.videoEngines, videoSource: { await library.videoSource($0) })
         commands = BrowserCommandResponder(model: model)
         super.init(frame: .zero)
         grid.autoresizingMask = [.width, .height]
@@ -73,6 +75,7 @@ struct BrowserContentRepresentable: NSViewRepresentable {
         DevelopmentHooks.scheduleSnapshot(of: view)
         DevelopmentHooks.scheduleViewer(model: model)
         DevelopmentHooks.scheduleInspector(model: model)
+        DevelopmentHooks.scheduleHover(grid: view.grid)
         return view
     }
 

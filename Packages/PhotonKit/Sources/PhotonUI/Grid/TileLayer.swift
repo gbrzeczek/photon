@@ -145,7 +145,7 @@ final class TileArtwork {
         return image
     }
 
-    /// The film symbol that stands in for a video frame until Milestone 6.
+    /// The film symbol, for a video with no frame yet, or none for its format.
     func videoPlaceholder(appearance: NSAppearance) -> CGImage? {
         if let videoSymbol { return videoSymbol }
         var result: CGImage?

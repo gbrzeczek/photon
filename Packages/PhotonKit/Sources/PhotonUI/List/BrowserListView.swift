@@ -333,7 +333,7 @@ final class BrowserListView: NSView, BrowserContent, NSTableViewDataSource, NSTa
     func retryThumbnails() {
         guard isShowing else { return }
         let rows = table.rows(in: table.visibleRect)
-        for row in rows.lowerBound..<rows.upperBound where row < result.count && !result.flags[row].contains(.video) {
+        for row in rows.lowerBound..<rows.upperBound where row < result.count {
             let asset = AssetID(rawValue: result.assetIDs[row])
             guard loader.cache.nearest(asset: asset, wanted: .small) == nil else { continue }
             loader.request(
@@ -459,7 +459,7 @@ final class BrowserListView: NSView, BrowserContent, NSTableViewDataSource, NSTa
         }
         let cached = loader.cache.nearest(asset: assetID, wanted: .small)
         cell.show(asset: asset, thumbnail: cached, placeholder: color)
-        guard cached == nil, !result.flags[row].contains(.video) else { return }
+        guard cached == nil else { return }
         loader.request(
             ThumbnailRequest(
                 asset: assetID, instance: FileInstanceID(rawValue: result.instanceIDs[row]), wanted: .small,

@@ -4,6 +4,7 @@ import Observation
 import PhotonCore
 import PhotonIndex
 import PhotonMedia
+import PhotonVideo
 
 /// The library and everything that works on it, for one app window. Everything it awaits runs off the
 /// main thread.
@@ -32,6 +33,7 @@ public final class BrowserLibrary {
     @ObservationIgnored let loader: ThumbnailLoader
     @ObservationIgnored let originals: OriginalReader
     @ObservationIgnored let pasteboard: MediaPasteboard
+    @ObservationIgnored let videoEngines = VideoEngines.standard
     @ObservationIgnored private var packs: ThumbnailPackStore
     @ObservationIgnored private var monitor: VolumeEventMonitor?
     @ObservationIgnored private var backgroundTasks: [VolumeID: Task<Void, Never>] = [:]
@@ -74,7 +76,8 @@ public final class BrowserLibrary {
         self.indexer = indexer
         let packs = ThumbnailPackStore(store: store)
         self.packs = packs
-        let generator = ThumbnailGenerator(store: store, packs: packs, scheduler: { indexer.scheduler(for: $0) })
+        let generator = ThumbnailGenerator(
+            store: store, packs: packs, scheduler: { indexer.scheduler(for: $0) }, video: AVFoundationThumbnailer())
         self.generator = generator
         let loader = ThumbnailLoader(store: store, packs: packs, generator: generator, cache: ThumbnailMemoryCache())
         self.loader = loader
@@ -113,6 +116,14 @@ public final class BrowserLibrary {
     public func start() async {
         await refresh()
         await connectVolumes()
+    }
+
+    /// What the viewer plays a video from. Nil when its volume is offline. Reads the library only.
+    nonisolated func videoSource(_ instance: FileInstanceID) async -> VideoSource? {
+        guard let row = try? await store.browseRows(instances: [instance.rawValue]).first,
+            let scheduler = indexer.scheduler(for: row.volumeID)
+        else { return nil }
+        return VideoSource(path: row.path, size: row.size, modifiedTime: row.modifiedTime, scheduler: scheduler)
     }
 
     /// Runs one at a time, however many mount events arrive. One that arrives during a run gets one more.

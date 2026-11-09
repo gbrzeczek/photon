@@ -42,6 +42,21 @@ final class GridDocumentView: NSView, NSDraggingSource {
     }
     override func menu(for event: NSEvent) -> NSMenu? { grid?.contextMenu(for: event) }
     override func selectAll(_ sender: Any?) { grid?.model.selectAll() }
+
+    private var pointerArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let pointerArea { removeTrackingArea(pointerArea) }
+        let area = NSTrackingArea(
+            rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self)
+        addTrackingArea(area)
+        pointerArea = area
+    }
+
+    override func mouseMoved(with event: NSEvent) { grid?.handleMouseMoved(event) }
+    override func mouseExited(with event: NSEvent) { grid?.stopVideoPreview() }
 }
 
 /// Sits over the scroll view's clip view, fixed to the viewport, and holds the tile layers.
@@ -74,6 +89,8 @@ final class TileGridView: NSView, BrowserContent {
     private let loader: ThumbnailLoader
     private let artwork = TileArtwork()
     private lazy var ticker = FrameTicker { [weak self] _ in self?.tick() ?? false }
+    /// A video playing in its tile while the pointer rests on it.
+    let videoPreview: TileVideoPreview
 
     private(set) var tileLayout = TileLayout()
     private var result = BrowseResult.empty
@@ -109,6 +126,8 @@ final class TileGridView: NSView, BrowserContent {
     private var selectOnRelease: Int?
     /// The tile whose photo is flying to or from the viewer.
     private var hiddenAsset: Int64?
+    /// Between a new result and its tiles, when a preview waits to see whether its video is still there.
+    private var isReloading = false
     private var band: RubberBand?
     /// Where the pointer is, in the window. Scrolling moves the band with no event of its own.
     private var bandPointer = CGPoint.zero
@@ -133,6 +152,8 @@ final class TileGridView: NSView, BrowserContent {
     init(model: BrowserModel) {
         self.model = model
         loader = model.library.loader
+        let library = model.library
+        videoPreview = TileVideoPreview(engines: library.videoEngines, lookup: { await library.videoSource($0) })
         super.init(frame: .zero)
         tileLayout = TileLayout(mode: model.layoutMode)
 
@@ -208,7 +229,10 @@ final class TileGridView: NSView, BrowserContent {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         ticker.invalidate()
-        guard window != nil else { return }
+        guard window != nil else {
+            videoPreview.stop()
+            return
+        }
         artwork.setScale(backingScale)
         startTicking()
     }
@@ -284,6 +308,11 @@ final class TileGridView: NSView, BrowserContent {
         }
     }
 
+    private func showVideoSymbol(on tile: TileLayer) {
+        tile.contentsGravity = .center
+        tile.contents = artwork.videoPlaceholder(appearance: effectiveAppearance)
+    }
+
     private func show(_ thumbnail: DecodedThumbnail, on tile: TileLayer) {
         tile.contents = thumbnail.surface
         tile.contentsGravity = .resizeAspectFill
@@ -295,6 +324,8 @@ final class TileGridView: NSView, BrowserContent {
     @objc private func boundsChanged() {
         let now = ContinuousClock.now
         let top = viewportTop
+        // The pointer is over another tile now, and it hasn't rested there.
+        if top != lastScrollTop { videoPreview.stop() }
         let elapsed = (now - lastScrollTime) / .seconds(1)
         if elapsed > 0 {
             let speed = abs(top - lastScrollTop) / CGFloat(elapsed)
@@ -365,6 +396,7 @@ final class TileGridView: NSView, BrowserContent {
                 if moved {
                     tile.frame = frame.offsetBy(dx: 0, dy: -base)
                     tile.placeBadge()
+                    if videoPreview.owns(tile) { videoPreview.tileDidResize() }
                 }
             } else {
                 let tile = freeTiles.popLast() ?? makeTile()
@@ -393,6 +425,7 @@ final class TileGridView: NSView, BrowserContent {
     }
 
     private func recycle(_ tile: TileLayer, row: Int) {
+        if videoPreview.owns(tile), !isReloading { videoPreview.stop() }
         tile.isHidden = true
         tile.opacity = 1
         tile.contents = nil
@@ -406,6 +439,7 @@ final class TileGridView: NSView, BrowserContent {
     }
 
     private func recycleAll() {
+        if !isReloading { videoPreview.stop() }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         for (row, tile) in tiles { recycle(tile, row: row) }
@@ -434,14 +468,15 @@ final class TileGridView: NSView, BrowserContent {
         }
 
         if tile.isVideo {
-            // Video thumbnails need a frame from the file, which arrives with Milestone 6.
-            tile.contentsGravity = .center
-            tile.contents = artwork.videoPlaceholder(appearance: effectiveAppearance)
             tile.setBadge(artwork.durationBadge(seconds: Int(result.durations[row])), scale: backingScale)
-            return
         }
         let assetID = AssetID(rawValue: asset)
-        if let nearest = loader.cache.nearest(asset: assetID, wanted: wanted) { show(nearest, on: tile) }
+        if let nearest = loader.cache.nearest(asset: assetID, wanted: wanted) {
+            show(nearest, on: tile)
+        } else if tile.isVideo {
+            // Until its frame arrives, or for good when there's no engine for its format.
+            showVideoSymbol(on: tile)
+        }
         guard requests, tile.shownTier != wanted else { return }
         request(row: row, assetID: assetID, wanted: wanted, priority: .visible)
     }
@@ -457,7 +492,7 @@ final class TileGridView: NSView, BrowserContent {
     private func requestVisibleThumbnails() {
         guard !isZooming else { return }
         let wanted = wantedTier
-        for (row, tile) in tiles where !tile.isVideo && tile.shownTier != wanted {
+        for (row, tile) in tiles where tile.shownTier != wanted {
             request(row: row, assetID: AssetID(rawValue: tile.assetID), wanted: wanted, priority: .visible)
         }
         requestAhead(wanted: wanted)
@@ -470,7 +505,7 @@ final class TileGridView: NSView, BrowserContent {
         let ahead = top >= lastAheadTop ? top + height : top - height
         lastAheadTop = top
         tileLayout.forEach(in: CGRect(x: 0, y: max(0, ahead), width: tileLayout.width, height: height)) { row, _ in
-            guard tiles[row] == nil, !result.flags[row].contains(.video) else { return }
+            guard tiles[row] == nil else { return }
             let assetID = AssetID(rawValue: result.assetIDs[row])
             if loader.cache.nearest(asset: assetID, wanted: wanted) == nil {
                 request(row: row, assetID: assetID, wanted: wanted, priority: .ahead)
@@ -517,7 +552,7 @@ final class TileGridView: NSView, BrowserContent {
         CATransaction.setDisableActions(true)
         for (row, tile) in tiles {
             tile.backgroundColor = backgroundColor(row: row)
-            if tile.isVideo { tile.contents = artwork.videoPlaceholder(appearance: effectiveAppearance) }
+            if tile.isVideo, tile.shownTier == nil { showVideoSymbol(on: tile) }
             setSelected(tile, showsSelected(row))
         }
         applyFocusColor()
@@ -577,7 +612,13 @@ final class TileGridView: NSView, BrowserContent {
         tileAnimation = nil
         scrollZoom = nil
         fullPassGeneration += 1
-        // Tile objects stay, but they may now show other rows.
+        // Tile objects stay, but they may now show other rows. A reload while indexing comes every
+        // couple of seconds, and a preview whose video is still on screen carries on in its new tile.
+        isReloading = true
+        defer {
+            isReloading = false
+            videoPreview.reattach(to: videoPreview.asset.flatMap { tilesByAsset[$0.rawValue] })
+        }
         recycleAll()
         tileLayout.setItems(result.aspects, prefix: prefix, rows: nil)
         tileLayout.resize(width: max(clip.bounds.width, 1), tile: CGFloat(model.tileSize))
@@ -654,6 +695,7 @@ final class TileGridView: NSView, BrowserContent {
     }
 
     func hideTile(row: Int?) {
+        if row != nil { videoPreview.stop() }
         withoutActions {
             if let hiddenAsset { tilesByAsset[hiddenAsset]?.opacity = 1 }
             hiddenAsset = row.map { result.assetIDs[$0] }
@@ -757,6 +799,7 @@ final class TileGridView: NSView, BrowserContent {
     }
 
     private func markZoomStep() {
+        videoPreview.stop()
         zoomEndsAt = ContinuousClock.now + Self.zoomSettleDelay
         startTicking()
     }
@@ -868,10 +911,12 @@ final class TileGridView: NSView, BrowserContent {
     // MARK: Input
 
     func handleKey(_ event: NSEvent) -> Bool {
-        BrowserKeys.handle(event, model: model, typeToSelect: false)
+        videoPreview.stop()
+        return BrowserKeys.handle(event, model: model, typeToSelect: false)
     }
 
     func handleMouseDown(_ event: NSEvent) {
+        videoPreview.stop()
         scrollZoom = nil
         window?.makeFirstResponder(document)
         cancelBand()
@@ -1090,6 +1135,28 @@ final class TileGridView: NSView, BrowserContent {
         model.setTileSizeFromGesture(next)
         zoom(to: next)
     }
+
+    /// Starts a preview when the pointer comes to rest on a video's tile, and stops one when it leaves.
+    /// Nothing starts while the grid is moving, a band is being drawn or the viewer is open.
+    func handleMouseMoved(_ event: NSEvent) {
+        hover(row: tileLayout.index(at: document.convert(event.locationInWindow, from: nil)))
+    }
+
+    /// The pointer is over `row`, or over no tile.
+    func hover(row: Int?) {
+        guard !model.isViewerOpen, band == nil, press == nil, !isZooming, scrollZoom == nil, tileAnimation == nil,
+            !isScrollingFast, let row, row < result.count,
+            result.flags[row].contains(.video), let tile = tiles[row], !tile.isHidden
+        else {
+            videoPreview.stop()
+            return
+        }
+        videoPreview.hover(
+            asset: AssetID(rawValue: result.assetIDs[row]), instance: FileInstanceID(rawValue: result.instanceIDs[row]),
+            tile: tile)
+    }
+
+    func stopVideoPreview() { videoPreview.stop() }
 
     func contextMenu(for event: NSEvent) -> NSMenu? {
         let point = document.convert(event.locationInWindow, from: nil)
