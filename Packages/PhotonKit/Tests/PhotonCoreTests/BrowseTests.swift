@@ -247,7 +247,7 @@ struct ThumbnailRecordTests {
         #expect(stored[existing.assetID]?.count == 1)
     }
 
-    @Test("Pending work skips videos, unhashed files and finished assets")
+    @Test("Pending work skips unhashed files and finished assets")
     func pending() async throws {
         let library = try await TestLibrary()
         let done = try await library.addIndexed("done.jpg", hash: TestLibrary.hash(1))

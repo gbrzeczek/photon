@@ -2,7 +2,7 @@
 
 Photon is a native macOS browser for photos and videos stored in local folders and on removable media. This document records the product scope, architecture, milestones and open risks.
 
-**Status:** Milestone 5, organization, is built, and favorites survive moving a library to a new drive on disk images. See [Milestone 5 results](#milestone-5-results). Milestone 4 is built and checked on disk images, with no physical pull by the user's decision, and measured on a real screen on a seeded 100k library and on the T7 Touch's real library of 27,235 assets. See [Milestone 4 results](#milestone-4-results), [Milestone 3 results](#milestone-3-results) and [Milestone 2 results](#milestone-2-results). The drive doesn't hold 100k files, so those two libraries together stand in for a 100k library on the drive. Spike code lives in [`Spikes/`](../Spikes/README.md), and results are under [Milestone 0 spikes](#milestone-0-spikes) and [Milestone 1 results](#milestone-1-results).
+**Status:** Milestone 6, video, is half built: AVFoundation plays, thumbnails and scrubs the format test set through the I/O scheduler, and the libmpv fallback isn't started. See [Milestone 6 results](#milestone-6-results). Milestone 5, organization, is built, and favorites survive moving a library to a new drive on disk images. See [Milestone 5 results](#milestone-5-results). Milestone 4 is built and checked on disk images, with no physical pull by the user's decision, and measured on a real screen on a seeded 100k library and on the T7 Touch's real library of 27,235 assets. See [Milestone 4 results](#milestone-4-results), [Milestone 3 results](#milestone-3-results) and [Milestone 2 results](#milestone-2-results). The drive doesn't hold 100k files, so those two libraries together stand in for a 100k library on the drive. Spike code lives in [`Spikes/`](../Spikes/README.md), and results are under [Milestone 0 spikes](#milestone-0-spikes) and [Milestone 1 results](#milestone-1-results).
 
 ## Product scope
 
@@ -50,6 +50,7 @@ Cloud backup, duplicate detection and face recognition are future features (see 
 | Thumbnail sizes | 320 and 800 px on the long edge, JPEG at quality 0.75 | Tiles run from 64 to 400 pt. At 2x, 320 px covers the default 160 pt tile and 800 px covers the largest |
 | Browse rows | One row per asset. Exact duplicates show as one tile, the first in path order | The current item and selection are assets, so two rows for one asset would be ambiguous |
 | Sorting | Rows are sorted in process on integers or byte keys, not by `ORDER BY` | A natural name sort with `localizedStandardCompare` costs seconds at 100k rows. The byte keys are close to Finder's order for camera names, but aren't identical |
+| Video reads | AVFoundation reads through `AVAssetResourceLoader` on a private URL scheme, served by the volume's I/O scheduler | AVFoundation would otherwise open the file itself, past the scheduler, its cancellation and its handle count, and might memory-map it |
 | Video | AVFoundation first, with a libmpv fallback, behind one interface. libmpv draws through its render API into a `CAOpenGLLayer`, from our own LGPL build | Spike 2: every test format played with no dropped frames on both embedding paths, and this one needs no patched mpv |
 | Viewer | An overlay in the same window, one layer whose contents move from thumbnail to preview to full resolution. It covers the detail column, so the sidebar stays | The grid is never torn down, and a sharper image lands without anything moving |
 | Previews | The size that fills the viewer for that photo, not the screen | A screen-sized preview would be scaled back down by the GPU, which costs sharpness as well as memory |
@@ -175,7 +176,7 @@ First-time indexing takes about 30 minutes per 100k photos at full speed, and ab
 - HEIC metadata can't be read from a partial file through ImageIO, so HEIC and AVIF files get a full read for now. A parser of our own could avoid that later.
 - Other photos try a 256 KB prefix, then 4 MB, then the whole file up to 512 MB, for formats such as some RAW files that keep metadata later on.
 - Video metadata comes from a small parser of QuickTime and MP4 boxes, which reads only box headers and the `moov` box, through the scheduler. AVFoundation isn't used here because it opens files itself. MKV, WebM, AVI and other containers have no metadata until FFmpeg's libraries arrive in Milestone 6.
-- Video thumbnails haven't been measured.
+- Video thumbnails are one frame through AVFoundation, which reads only the index and a keyframe. They haven't been measured on the T7.
 
 ### Thumbnails and memory
 
@@ -188,7 +189,7 @@ First-time indexing takes about 30 minutes per 100k photos at full speed, and ab
 - During fast scrolling, tiles show the stored dominant color and skip decoding.
 - The rough cost is 2–5 GB per 100k photos, so a large drive could use 25 GB or more.
 - The cache has a size limit, 20 GB for now. Small thumbnails are kept for every asset, and large packs are evicted whole, least recently used first, with favorites last. Replaced thumbnails leave unused bytes in their pack until it goes, since nothing compacts packs yet.
-- **Video tiles until Milestone 6** show a film symbol and the duration, read from the database. They never read the file: AVFoundation would open it itself, which bypasses the I/O scheduler.
+- **Video tiles** show a frame from about a second in, or halfway through a shorter clip, at the nearest keyframe, which decodes one frame. The first frame is often black. They keep the duration badge. A video gets no embedded preview stage, so the first pass reads nothing for it. A format no engine here decodes is marked failed without a read, and keeps the film symbol, so the fallback's arrival needs a migration that clears failed videos.
 - **Offline**, stored thumbnails show as usual. Anything missing keeps its dominant color, or a neutral fill, and nothing fails.
 
 ### Grid and list
@@ -204,6 +205,7 @@ First-time indexing takes about 30 minutes per 100k photos at full speed, and ab
 - If capture dates arrive during a sort, the list re-sorts around the anchor so that the view doesn't jump. While indexing, the query runs at most every 2 seconds, and everything proportional to the library happens off the main thread: the query, the layout pass, and the map from old rows to new ones.
 - Selection is ranges of rows, so selecting 100k items costs one range. The map above carries it across a change of order.
 - **Rubber band.** As in Finder and Photos, a plain drag on a tile drags the file, selecting the tile first if it wasn't, and a plain drag from a gap draws a band. Tiles nearly fill the view, so Shift or Command starts a band on any tile too, and keeps what was already selected. A plain click on one of several selected tiles narrows the selection only when the button comes up, because the press could still be a drag. Holding the pointer past the top or bottom scrolls, faster the further past. Tiles on screen check the rectangle directly, and the rows are worked out once, off the main thread, when the button comes up, so a band over the whole library costs only what's visible on each frame. The status bar's count catches up then too.
+- **Hover previews.** A video plays in its tile once the pointer has rested on it for 0.6 seconds, muted and looping, as in Photos. Only one plays at a time. It starts from the poster frame, which the tile already shows, and its layer only appears once that frame is ready, so the tile never jumps. Scrolling, zooming, a press, a key, a rubber band or opening the viewer stops it, and nothing starts while the grid is moving. A reload, which indexing makes every couple of seconds, keeps it playing if its video is still on screen. Reduce Motion turns previews off, and Settings should get a switch for them in Milestone 7. An offline video, or a format no engine plays, gets none. The keyboard has no equivalent, by choice: playing the current tile would play while you browse the photos beside it. The list has none, because its thumbnails are too small to show motion.
 - **The list stays alive but idle while hidden.** A hidden `NSTableView` still lays out rows and makes cells, and that cost the grid hitches of up to 46 ms. It takes the result and the selection when it next shows.
 
 ### Viewer
@@ -228,7 +230,7 @@ First-time indexing takes about 30 minutes per 100k photos at full speed, and ab
 - **Transitions** fly in Core Animation, from the tile's crop to the whole photo and back, so they don't depend on the main thread. Reduce Motion replaces them with a fade.
 - **Offline**, or if the file changed, the thumbnail stays and nothing fails. Moving on works as usual.
 - **Permission.** A build with no stable signature, started by Launch Services, may not get removable-volume access, and then reads fail with the same quiet result, so the viewer stays on thumbnails with no explanation. Milestone 7's signing should settle this. If it doesn't, this needs a message of its own.
-- **Videos until Milestone 6** show the film symbol, and the duration in the status bar. Space closes them, because there's nothing to play yet.
+- **Videos** fly in from their tile like photos, on their stored thumbnail, and the player's layer only appears over it once it has a frame, so nothing flashes black. A player opens once the viewer has settled, so a held key passes videos without opening any, and it starts playing at once. Moving on or closing stops it, and the flight back carries the thumbnail. Zoom is off for videos. See [Video](#video) for the controls.
 - **Rotation isn't applied.** Nothing sets the stored rotation yet. When something does, the viewer has to use it too.
 
 ### Copy and drag
@@ -300,7 +302,7 @@ It runs in the library, so it works offline. It isn't saved with the session.
 
 An asset is in at most one stack. Pairing compares what it finds with what's stored and writes only the difference, so an unchanged rescan still writes nothing. It works from the database, so it never reads a file.
 
-A stack shows as one tile, its cover, with a badge for its kind, in the grid, the list and the viewer. A member is only hidden when its cover is in the same result, so a favorite RAW whose JPEG isn't a favorite still shows in Favorites. View → Expand Stacks shows every member as its own tile, everywhere. The inspector lists the stack's members. Copy and drag act on the cover alone while a stack is collapsed. A Live Photo's motion plays from Milestone 6.
+A stack shows as one tile, its cover, with a badge for its kind, in the grid, the list and the viewer. A member is only hidden when its cover is in the same result, so a favorite RAW whose JPEG isn't a favorite still shows in Favorites. View → Expand Stacks shows every member as its own tile, everywhere. The inspector lists the stack's members. Copy and drag act on the cover alone while a stack is collapsed. A Live Photo's motion isn't built yet.
 
 **Inspector.** Command-I, View → Show Inspector, the toolbar's info button, or More Info in the context menu. It's a column at the trailing edge, beside grid, list and viewer, and it describes the photo in the viewer, or else the current item. It shows the name, kind and format, pixel dimensions, size, capture date, duration, favorite, tags, the albums holding it, its stack, and every file holding the content, by volume and path. A file on an offline volume says Offline, and a read-only one says Read Only. It reads only the library, and it waits for a held key like the status bar.
 
@@ -324,7 +326,7 @@ Keyboard navigation is built alongside the grid, list and viewer, not added duri
 - Common actions appear in the menu bar with their shortcuts, so that they're discoverable.
 - Shortcuts are tested on non-US keyboard layouts.
 
-**Shortcuts.** Some rows have no effect yet: video is Milestone 6, and rename and trash need the file operations layer. Rotation has no milestone yet. The checks against Photos and Finder, and on non-US layouts, haven't been done.
+**Shortcuts.** Some rows have no effect yet: rename and trash need the file operations layer. Rotation has no milestone yet. The checks against Photos and Finder, and on non-US layouts, haven't been done.
 
 | Context | Key | Action |
 |---|---|---|
@@ -361,7 +363,7 @@ Keyboard navigation is built alongside the grid, list and viewer, not added duri
 | Video | Option-Left, Option-Right | Step one frame |
 | Video | M | Mute |
 
-Space closes a photo in the viewer, so it works as a quick look toggle. For videos it plays and pauses, and Escape closes. Until Milestone 6, Space closes a video too.
+Space closes a photo in the viewer, so it works as a quick look toggle. For videos it plays and pauses, and Escape closes. J and L each double the speed in their direction up to 8×, as in editing apps, and J only plays backward where AVFoundation can. A click on a video plays or pauses it, as in QuickTime Player. Letters are matched by character, like Period.
 
 The viewer also takes a pinch, a mouse wheel or a scroll with Command or Option held to zoom, the toolbar's zoom buttons, a double click or two-finger double tap to toggle actual size, dragging or a trackpad scroll to pan when zoomed in, and a two-finger swipe to the next photo at fit. Double-clicking a tile or row opens it. In the grid, a scroll with Command or Option held changes the tile size. These need the mouse or trackpad, and everything they do has a key.
 
@@ -373,6 +375,14 @@ The viewer also takes a pinch, a mouse wheel or a scroll with Command or Option 
 - **libmpv fallback:** MKV, WebM, AVI, WMV and similar. Thumbnails for these formats use FFmpeg's libraries, so both share one dependency stack.
 
 libmpv uses `vo=libmpv` and the OpenGL render API, drawn into a `CAOpenGLLayer` tagged sRGB. OpenGL is deprecated, so the Vulkan path through MoltenVK stays as the exit. It needs a patched mpv to handle window resizes, which our own build would make possible.
+
+**Reads.** AVFoundation never gets a file URL. `ScheduledResourceLoader` gives it a URL on a private scheme and answers each loading request with one I/O job: open the file, check its size and modified time against the library, read in 1 MB pieces, check again, close. A request is answered with at most 4 MB, and AVFoundation asks again for the rest, so a request to the end of a large file never pulls all of it into memory, and no job holds the volume for long. Playback reads at `visible`, and background thumbnails at `backgroundWork`. No handle stays open between requests, so `willUnmount` finds nothing to close but what's mid-read. A read that fails for the drive's sake makes the playback `unavailable`, which retries from the same place once the volume is back, and a file AVFoundation can't decode is `unsupported`.
+
+**Controls.** A transport bar on Liquid Glass at the bottom of the viewer: play and pause, elapsed and remaining time, a scrubber and mute. It appears when the video is ready and on any pointer movement, and goes 2.5 seconds after the last one while playing. It stays while paused or in use. None of its controls take focus, so the keys stay with the viewer. Mute carries from one video to the next.
+
+**Scrub previews.** Hovering over the scrubber or dragging it shows a frame above the bar, with its time. Frames come from the playback's own asset, at the nearest keyframe within half a second, at 160 pt. One decodes at a time, and only the latest request waits behind it, so a fast drag never builds a queue. A drag also moves the video itself to keyframes as it goes, then to the exact frame when the button comes up, and playing resumes if it was playing.
+
+**Format test set.** `SyntheticVideo` writes real clips with AVFoundation, with a color that changes per frame: H.264 in MP4, MOV and M4V, HEVC in MOV and MP4, ProRes 422 and Motion JPEG in MOV. `photon-index videos <folder>` writes the same set for looking at in the app. The fallback's formats need clips from FFmpeg, which CI doesn't have.
 
 Apple's MediaExtension framework stays an option, but each user would have to enable the extension in System Settings. Use LGPL builds of FFmpeg and mpv unless the project adopts a GPL-compatible license.
 
@@ -592,6 +602,49 @@ The tool was first validated on an exFAT disk image, and those numbers are in `S
 - **Why it works:** a self-signed certificate gives a designated requirement of bundle identifier plus certificate, which stayed identical across rebuilds. Ad-hoc signing gives a `cdhash` requirement, which changes on every build.
 - **Also confirmed:** `codesign` works with an untrusted certificate when given its SHA-1 hash and keychain, so CI doesn't need to trust it. Local builds ran, even though `spctl` rejects them.
 - **Testing note:** disk images aren't gated by TCC at all, so this check always needs a real drive.
+
+### Milestone 6 results
+
+The AVFoundation half is built: video thumbnails, playback in the viewer, its controls, scrub previews and the video keys, all reading through the volume's I/O scheduler. `VideoEngine` hides it, so the fallback can join without the viewer changing. The libmpv fallback isn't started, because it needs our own LGPL build of mpv and FFmpeg first.
+
+**Done when a format test set plays and shows thumbnails**, for AVFoundation's half. All 7 formats in the set got thumbnails through the scheduler, then played, seeked to an exact frame and gave a scrub preview, in `VideoFormatTests`. A clip written held upright has an upright thumbnail. The fallback's formats, MKV, WebM, AVI, WMV and the rest, show the film symbol and say "Can't play this format".
+
+**Removable media**, on exFAT disk images, by the user's decision in [Removable media checks](#removable-media-checks):
+
+| Check | Result |
+|---|---|
+| Thumbnails from a read-only image | H.264, HEVC and ProRes all made, and the image is byte for byte unchanged |
+| `willUnmount` during playback | No handle stays open |
+| Forced detach during playback | A new read says `unavailable`, not `unsupported`, and the app keeps running |
+| Reattach | The same video plays again and seeks to an exact frame |
+| Reads failing with `EIO` on a healthy mount | The thumbnail stays pending, not failed, and no handle is left open |
+| A file changed since indexing | It isn't read as the old one |
+
+**Tests:** 459 Swift Testing tests pass, up from 442. 8 are the format test set, 2 are video on disk images, and 7 drive the browser through real events in a window that isn't shown: video tiles get frames, Space plays and pauses, J, K, L, M and the modified arrows work, a held arrow key opens no player, a format with no engine says so, and hover previews start on resting, survive a reload, and stop for a move, a key, a scroll and the viewer.
+
+**Real GoPro files**, two clips copied from the T7's `GoPro` folder to the internal disk, because the drive was mounted writable at the time and `photon-index scan` refuses that: 4K HEVC at 25 fps, with AAC sound and GoPro's timecode and telemetry tracks. Both got thumbnails in 0.14 seconds together, played in the viewer, stopped on their last frame at the end, and played as hover previews in their tiles, checked by pixel differences between window snapshots. `PHOTON_HOVER_ROW` rests the pointer on a tile, for looking at a preview without driving the app.
+
+**Light and dark**, by window snapshot from the running app, on a library of the format test set at 1280×720 with synthetic photos: the grid with video frames and duration badges, the film symbol for videos with no frames, and the viewer playing HEVC with the transport bar. Both read clearly.
+
+**Performance:** one pass with `PHOTON_PERF_OUT` on the seeded 100k library, on the Retina display, release build, then a repeat for launch. The grid scenarios ran at 119.6–120 fps with no more than 2 missed frames, a worst main-thread frame of 4.1 ms, and 401–608 MB. Opening a folder took 72–73 ms. Launch took 410–441 ms to the result and 482–522 ms to the frame after it, over the 350 ms target, so `main` was built and measured alongside it on the same machine: 407–409 ms and 480–490 ms. Linking AVFoundation costs nothing measurable, and both are slower than at Milestone 5 on the same seeded library, for a reason this pass didn't look into. The first launch of each new binary took about 1 second, on both. Only the grid scenarios ran, as in Milestone 5's pass, so the list and viewer scenarios still need a run.
+
+What building it found, and fixed:
+
+- **A reload stopped hover previews.** Every new result recycles the tiles, which stopped the preview, so in the real app a launch's rescan cut it off within 2 seconds while the tests passed. The preview now moves to its video's new tile, and stops only if the video has gone.
+- **`AVAssetWriter` holds its file for a moment after it finishes**, so an image it wrote to couldn't be detached at once. The tests write clips on the internal disk and copy them over. A failing run had left two images attached, which were detached by image path.
+
+**Not verified:**
+
+- The transport bar's autohide, the scrub preview, the scrubber and hover previews by a real pointer. Hover previews are tested by calling the grid's pointer handler, and seen in the app through `PHOTON_HOVER_ROW`. They're built from AppKit's own slider and buttons, and only the keys are tested.
+- Real camera files: phone HEVC with HDR, Dolby Vision, GoPro's files on the T7, and long files. HDR video should use extended range through `AVPlayerLayer`, but nothing has checked it.
+- Sound, and AVFoundation's reads during long playback from a real drive.
+- VoiceOver on the controls.
+
+**Not built:**
+
+- The libmpv fallback, its thumbnails through FFmpeg, and metadata for its containers. When it arrives, a migration must clear the failed state of videos it can decode.
+- A Live Photo's motion. How it should work is in [Live Photo motion](#live-photo-motion).
+- Play and pause in the menu bar. Space can't be a menu shortcut, because the menu would take it from the search field.
 
 ### Milestone 5 results
 
@@ -873,6 +926,18 @@ Developer ID and notarization can be added later ($99/year). That also needs the
 
 ## Future feature notes
 
+### Live Photo motion
+
+A Live Photo is already a stack, from pairing: the photo is its cover, and its MOV of at most 4 seconds is a member. Its motion needs no new reading path, because the hover preview and the viewer already play a video through the scheduler. What's left is choosing when, and from which file:
+
+- **In the grid**, resting on a Live Photo's tile plays its motion in the tile, through `TileVideoPreview`, with the same delay, the same stops, and Reduce Motion turning it off. It differs from a video's preview in three ways. It starts from the beginning, not the poster frame, because the motion leads up to the photo. It plays once and doesn't loop. At the end it fades back to the still, which is the photo itself and not a frame of the video, so the fade has to be real rather than a cut.
+- **In the viewer**, the still shows as a photo does, at full resolution and with zoom. Motion plays once, with sound, when the viewer settles on it, as Photos does, and again on demand. That needs a key that doesn't clash: Space closes a photo, so a Live Photo needs its own, which the shortcut table must check against Photos. The player's layer sits above the picture only while the motion plays, and goes at the end, so zoom and the full-resolution still are untouched.
+- **The badge** for a Live Photo stack is already on its tile. The viewer should show the same symbol, and one that plays the motion on a click.
+- **Which file:** the stack member that's a video. It's in the same folder of the same volume, by the pairing rule, so it's online whenever the photo is. A Live Photo whose MOV has gone is no longer a stack after the next pairing, and shows as a plain photo.
+- **Offline**, nothing plays, and the still stays, as for a video.
+- **Expanded stacks** show the MOV as its own tile, which previews as a video, and the photo as a plain photo.
+- **Not decided:** whether Live Photo motion has its own switch in Settings, apart from video previews. Photos has one switch for both.
+
 ### Duplicates and similar scenes
 
 - Exact matches come from content identity.
@@ -896,8 +961,8 @@ Check model licenses before distributing. InsightFace's pretrained models are no
 |---|---|
 | Hand-built grid costs more than expected | `CALayer` grid chosen knowingly. Selection, drag and accessibility are built with the grid, not added later |
 | OpenGL is removed from macOS | Vulkan through MoltenVK works, but needs a patched mpv. Our own build makes that possible |
-| Our own mpv and FFmpeg build is harder than expected | Not attempted yet, and needed before Milestone 6 |
-| mpv's file access bypasses the I/O scheduler | Test `stream_cb.h` in Milestone 6 |
+| Our own mpv and FFmpeg build is harder than expected | Not attempted yet, and needed for the fallback, the other half of Milestone 6 |
+| mpv's file access bypasses the I/O scheduler | Test `stream_cb.h` in Milestone 6. AVFoundation's is solved by `ScheduledResourceLoader` |
 | Volume UUIDs change or collide without a marker file | File sampling on mount, hash-based reattachment, and separate handling of two mounted volumes with one UUID |
 | First-time indexing takes tens of minutes | Priority scheduling, resumable stages, visible tiles first, one read per file |
 | A slower link caps throughput | The T7 Touch linked at USB 2 speed on one connection. Worth showing in the UI if indexing is slow |

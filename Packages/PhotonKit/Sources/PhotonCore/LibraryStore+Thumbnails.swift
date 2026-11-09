@@ -145,7 +145,7 @@ extension LibraryStore {
         }
     }
 
-    /// Hashed photos on `volume` in this state, in id order, one file each. Waiting for the hash means an
+    /// Hashed photos and videos on `volume` in this state, in id order, one file each. Waiting for the hash means an
     /// exact duplicate never gets decoded twice.
     public func pendingThumbnails(
         volume: VolumeID, state: ThumbnailState, after cursor: AssetID?, limit: Int
@@ -157,7 +157,7 @@ extension LibraryStore {
                     SELECT f.*, a.thumbnail_state, a.kind FROM assets a
                     JOIN file_instances f ON f.id =
                         (SELECT min(id) FROM file_instances WHERE asset_id = a.id AND volume_id = :volume)
-                    WHERE a.thumbnail_state = :state AND a.kind = 1 AND a.id > :cursor
+                    WHERE a.thumbnail_state = :state AND a.id > :cursor
                         AND a.content_hash IS NOT NULL
                     ORDER BY a.id LIMIT :limit
                     """,
@@ -175,7 +175,7 @@ extension LibraryStore {
                 db,
                 sql: """
                     SELECT count(*) FROM assets a
-                    WHERE a.thumbnail_state < 2 AND a.kind = 1
+                    WHERE a.thumbnail_state < 2
                         AND EXISTS (SELECT 1 FROM file_instances WHERE asset_id = a.id AND volume_id = ?)
                     """,
                 arguments: [volume.rawValue]) ?? 0

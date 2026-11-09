@@ -6,7 +6,7 @@ import os
 /// Makes thumbnails from originals, on request for tiles on screen and in the background for the rest.
 ///
 /// Every read goes through the volume's I/O scheduler, so it's cancellable, has its priority and never
-/// memory-maps. Video thumbnails arrive in Milestone 6, so videos are never read here.
+/// memory-maps. A video's frame comes from `video`, which reads through the same scheduler.
 public final class ThumbnailGenerator: Sendable {
     public enum Outcome: Sendable, Equatable {
         /// There may be something new to show.
@@ -18,16 +18,20 @@ public final class ThumbnailGenerator: Sendable {
     private let store: LibraryStore
     private let packs: ThumbnailPackStore
     private let scheduler: @Sendable (VolumeID) -> VolumeIOScheduler?
+    private let video: (any VideoThumbnailing)?
     private static let signposter = OSSignposter(subsystem: Signposts.subsystem, category: "Thumbnails")
 
-    /// - Parameter scheduler: The scheduler for an online volume, or nil when it's offline.
+    /// - Parameters:
+    ///   - scheduler: The scheduler for an online volume, or nil when it's offline.
+    ///   - video: Frames for videos. Without it, videos stay pending and are never read.
     public init(
         store: LibraryStore, packs: ThumbnailPackStore,
-        scheduler: @escaping @Sendable (VolumeID) -> VolumeIOScheduler?
+        scheduler: @escaping @Sendable (VolumeID) -> VolumeIOScheduler?, video: (any VideoThumbnailing)? = nil
     ) {
         self.store = store
         self.packs = packs
         self.scheduler = scheduler
+        self.video = video
     }
 
     private enum Stage: Sendable { case preview, full }
@@ -48,7 +52,7 @@ public final class ThumbnailGenerator: Sendable {
         asset: AssetID, instance: FileInstanceID, priority: IOPriority,
         progress: @Sendable () -> Void
     ) async throws {
-        guard var job = try await store.thumbnailJob(asset: asset, instance: instance), job.kind == .photo,
+        guard var job = try await store.thumbnailJob(asset: asset, instance: instance),
             let scheduler = scheduler(job.instance.volumeID)
         else { return }
 
@@ -139,6 +143,7 @@ public final class ThumbnailGenerator: Sendable {
         _ stage: Stage, job: ThumbnailJob, priority: IOPriority, scheduler: VolumeIOScheduler
     ) async throws -> Produced? {
         let instance = job.instance
+        if job.kind == .video { return try await runVideo(stage, job: job, priority: priority, scheduler: scheduler) }
         let hasPreview = Thumbnailer.mayHaveEmbeddedPreview(fileExtension: instance.path.fileExtension)
         // Nothing to read for this stage. Skipping the read here is the point of checking the format.
         if stage == .preview, !hasPreview {
@@ -169,6 +174,39 @@ public final class ThumbnailGenerator: Sendable {
             return nil
         } catch VolumeIOError.system {
             // One bad read says nothing about the file. It stays pending for the next run.
+            return nil
+        }
+    }
+
+    /// A video has no embedded preview worth finding, so its first stage reads nothing. Its frame comes
+    /// from the video thumbnailer, whose reads go through the same scheduler.
+    private func runVideo(
+        _ stage: Stage, job: ThumbnailJob, priority: IOPriority, scheduler: VolumeIOScheduler
+    ) async throws -> Produced? {
+        let instance = job.instance
+        guard stage == .full else {
+            return Produced(
+                job: job, size: instance.size, modifiedTime: instance.modifiedTime, state: .preview, set: nil)
+        }
+        guard let video else { return nil }
+        // A format nothing here can decode fails without a read. When an engine that can arrives, a
+        // migration has to clear these.
+        guard video.canThumbnail(fileExtension: instance.path.fileExtension) else {
+            return Produced(
+                job: job, size: instance.size, modifiedTime: instance.modifiedTime, state: .failed, set: nil)
+        }
+        do {
+            let image = try await video.poster(
+                of: instance, scheduler: scheduler, priority: priority, maxPixelSize: ThumbnailSizes.large)
+            let set = image.flatMap(Thumbnailer.thumbnails(from:))
+            return Produced(
+                job: job, size: instance.size, modifiedTime: instance.modifiedTime,
+                state: set == nil ? .failed : .complete, set: set)
+        } catch VideoReadError.fileChanged {
+            return nil
+        } catch VolumeIOError.notFound {
+            return nil
+        } catch VolumeIOError.system {
             return nil
         }
     }

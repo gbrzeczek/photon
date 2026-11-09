@@ -85,7 +85,12 @@ public enum Thumbnailer {
         ]
         guard let image = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, thumbnailOptions as CFDictionary)
         else { return nil }
+        return thumbnails(from: image)
+    }
 
+    /// Both stored sizes from a decoded picture, such as a video's frame. `image` should already be
+    /// at most `ThumbnailSizes.large` on its long edge.
+    public static func thumbnails(from image: CGImage) -> ThumbnailSet? {
         var thumbnails: [EncodedThumbnail] = []
         let longEdge = max(image.width, image.height)
         var small = image

@@ -28,7 +28,7 @@ xcodebuild build -project Photon.xcodeproj -scheme Photon -destination 'platform
 swift run --package-path Packages/PhotonKit -c release photon-index scan <folder> --database <file>
 ```
 
-`photon-index thumbnails <folder> --database <file>` makes thumbnails for a scanned folder, and `photon-index seed --database <file> --count 100000` writes a library with no real files, for measuring the grid. Point the app at one with `PHOTON_LIBRARY=<file>`, so that nothing touches the real library. `PHOTON_PERF_OUT=<file>` runs the scripted scenarios and writes their timings. `PHOTON_WINDOW=main` or `builtin` fills that display first, because a small window hides most of the cost. If the timings show a real problem, look closer with `xcrun xctrace record --template 'Animation Hitches'`, since in-app timers can't see the render server.
+`photon-index thumbnails <folder> --database <file>` makes thumbnails for a scanned folder, `photon-index videos <folder>` writes the video format test set, and `photon-index seed --database <file> --count 100000` writes a library with no real files, for measuring the grid. Point the app at one with `PHOTON_LIBRARY=<file>`, so that nothing touches the real library. `PHOTON_PERF_OUT=<file>` runs the scripted scenarios and writes their timings. `PHOTON_WINDOW=main` or `builtin` fills that display first, because a small window hides most of the cost. If the timings show a real problem, look closer with `xcrun xctrace record --template 'Animation Hitches'`, since in-app timers can't see the render server.
 
 The UI tests need an unlocked screen, so they aren't in CI:
 
@@ -42,7 +42,7 @@ Start measurements from a shell, not with `open`: an unsigned build started by L
 
 `RemovableMediaUITests` needs `TEST_RUNNER_PHOTON_UITEST_REMOVABLE_LIBRARY`, a library made from an exFAT disk image, and `UITests/removable-media-helper.sh <image>` running in another terminal. Its header explains them.
 
-`PHOTON_VIEWER_ROW=<n>` opens the viewer on a row, for looking at it with `PHOTON_SNAPSHOT=<file>`. `PHOTON_INSPECTOR=<n>` selects a row and shows the inspector, the same way. `OrganizationUITests` changes favorites in its library, so give it a seeded copy. With the screen locked, `PHOTON_RENDER_LIBRARY` and `PHOTON_RENDER_OUT` render the grid, sidebar and inspector offscreen in both appearances. `FileTransferUITests` also needs `TEST_RUNNER_PHOTON_UITEST_FILES_LIBRARY` and `TEST_RUNNER_PHOTON_UITEST_DROP_FOLDER`, and its header explains them.
+`PHOTON_VIEWER_ROW=<n>` opens the viewer on a row, for looking at it with `PHOTON_SNAPSHOT=<file>`, and `PHOTON_HOVER_ROW=<n>` rests the pointer on a tile, so a video's preview plays in it. `PHOTON_INSPECTOR=<n>` selects a row and shows the inspector, the same way. `OrganizationUITests` changes favorites in its library, so give it a seeded copy. With the screen locked, `PHOTON_RENDER_LIBRARY` and `PHOTON_RENDER_OUT` render the grid, sidebar and inspector offscreen in both appearances. `FileTransferUITests` also needs `TEST_RUNNER_PHOTON_UITEST_FILES_LIBRARY` and `TEST_RUNNER_PHOTON_UITEST_DROP_FOLDER`, and its header explains them.
 
 `photon-index scan` refuses an external volume unless it's mounted read-only, though the app reads one that is writable, and `generate` only writes to the internal disk or a disk image. Keep libraries built from a real drive out of this repository, because they contain real file names.
 
@@ -55,6 +55,7 @@ The tests create and mount exFAT disk images with `hdiutil`, which works without
 - Never touch the filesystem on the main thread. A sleeping drive would freeze the UI.
 - Send all reads of user media through the per-volume I/O scheduler. Reads must be cancellable.
 - Never memory-map files on removable media. This includes `.mappedIfSafe` and passing a URL to `CGImageSource`. Read the bytes normally, then create the source from them.
+- Never give AVFoundation a file URL. It opens files itself, past the scheduler. Use `ScheduledResourceLoader`, which serves its reads through the scheduler.
 - On `willUnmount`, cancel all work and close every file handle for that volume.
 
 ### User data

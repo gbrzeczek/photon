@@ -13,6 +13,8 @@ extension BrowserModel: ViewerHost {
         guard !isViewerOpen, result.count > 0 else { return }
         let row = selection.currentRow ?? active?.captureAnchor()?.row ?? 0
         if selection.currentRow == nil { select(row: row) }
+        // However the viewer was opened, a tile's preview shouldn't play on underneath it.
+        (active as? TileGridView)?.stopVideoPreview()
         isViewerOpen = true
         viewer?.open(row: row)
         saveSessionSoon()
@@ -49,6 +51,9 @@ extension BrowserModel: ViewerHost {
     }
 
     func panViewer(dx: Int, dy: Int) -> Bool { viewer?.pan(dx: dx, dy: dy) ?? false }
+
+    /// The video in the viewer, when it's showing one.
+    var viewerVideo: ViewerVideo? { viewer?.isShowingVideo == true ? viewer?.video : nil }
 
     /// Command-Equals and Command-Minus: the viewer's zoom when it's open, the tile size otherwise.
     public func stepZoom(larger: Bool) {

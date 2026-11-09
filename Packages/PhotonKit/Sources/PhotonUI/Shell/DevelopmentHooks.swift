@@ -11,7 +11,8 @@ import UniformTypeIdentifiers
 /// `PHOTON_VIEWER_ROW` opens the viewer on a row after `PHOTON_VIEWER_DELAY` seconds, for looking at it
 /// without driving the app, `PHOTON_VIEWER_ZOOM` zooms in that many steps, and
 /// `PHOTON_VIEWER_SCROLL` that many wheel notches. `PHOTON_INSPECTOR=<row>` selects that row and shows the
-/// inspector, for looking at it the same way.
+/// inspector, for looking at it the same way. `PHOTON_HOVER_ROW=<row>` rests the pointer on that tile
+/// after 2 seconds, so that a video's preview plays in it.
 @MainActor
 enum DevelopmentHooks {
     static func applyAppearance() {
@@ -64,6 +65,11 @@ enum DevelopmentHooks {
             model.select(row: row)
             if !model.isInspectorShown { model.toggleInspector() }
         }
+    }
+
+    static func scheduleHover(grid: TileGridView) {
+        guard let row = ProcessInfo.processInfo.environment["PHOTON_HOVER_ROW"].flatMap(Int.init) else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak grid] in grid?.hover(row: row) }
     }
 
     static func scheduleSnapshot(of view: NSView) {
