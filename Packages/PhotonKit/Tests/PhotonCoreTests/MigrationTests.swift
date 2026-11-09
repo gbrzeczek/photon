@@ -55,9 +55,54 @@ struct MigrationTests {
     }
 
     @Test("The v3 schema matches its snapshot")
-    func schemaSnapshotV3() async throws {
+    func schemaSnapshotV3() throws {
+        let queue = try DatabaseQueue()
+        try LibraryMigrations.migrator.migrate(queue, upTo: "v3")
+        let schema = try queue.read { try String.fetchAll($0, sql: Self.schemaSQL).joined(separator: ";\n\n") + ";\n" }
+        #expect(schema == (try snapshot("schema-v3")), "Add a migration instead of editing v3.")
+    }
+
+    @Test("The v4 schema matches its snapshot")
+    func schemaSnapshotV4() async throws {
         let store = try LibraryStore(url: temporaryURL())
-        #expect(try await schema(store) == (try snapshot("schema-v3")), "Add a migration instead of editing v3.")
+        #expect(try await schema(store) == (try snapshot("schema-v4")), "Add a migration instead of editing v4.")
+    }
+
+    @Test("A v3 library upgrades in place, keeping folder and album sessions and organization data")
+    func upgradeFromV3() async throws {
+        let url = temporaryURL()
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        do {
+            let queue = try DatabaseQueue(path: url.path)
+            try LibraryMigrations.migrator.migrate(queue, upTo: "v3")
+            try await queue.write { db in
+                try db.execute(
+                    sql: """
+                        INSERT INTO volumes (id, uuid, name, first_seen_at, last_seen_at) VALUES (1, 'U', 'Drive', 0, 0);
+                        INSERT INTO assets (id, kind, created_at, is_favorite) VALUES (7, 1, 0, 1);
+                        INSERT INTO albums (id, name, created_at) VALUES (3, 'Trip', 0);
+                        INSERT INTO album_assets (album_id, asset_id, added_at) VALUES (3, 7, 0);
+                        INSERT INTO sessions (volume_id, relative_path, sort_key, anchor_asset_id, current_asset_id,
+                            anchor_position, viewer_open, tile_size, updated_at)
+                        VALUES (1, 'Photos', 'name', 7, 7, 0.5, 1, 120, 1);
+                        INSERT INTO sessions (album_id, sort_key, updated_at) VALUES (3, 'date', 2);
+                        """)
+            }
+        }
+        let store = try LibraryStore(url: url)
+        let folder = try #require(try await store.session(for: BrowseScope(volume: VolumeID(rawValue: 1), path: "Photos")))
+        #expect(folder.sort.key == .name)
+        #expect(folder.anchor == AssetID(rawValue: 7) && folder.current == AssetID(rawValue: 7))
+        #expect(folder.anchorPosition == 0.5 && folder.isViewerOpen && folder.tileSize == 120)
+        #expect(try await store.latestSession()?.source == .album(AlbumID(rawValue: 3)))
+        #expect(try await store.asset(AssetID(rawValue: 7))?.isFavorite == true)
+        let album = try await store.browse(.album(AlbumID(rawValue: 3)), sort: .default)
+        #expect(album.assetIDs.isEmpty)  // The asset has no file, so it has no row, but it's still in the album.
+        let members = try await store.pool.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM album_assets") }
+        #expect(members == 1)
+        // A source that v3 couldn't store saves now.
+        try await store.saveSession(BrowseSession(source: .favorites, sort: .default, viewMode: 0, tileSize: nil, anchor: nil))
+        #expect(try await store.session(for: .favorites) != nil)
     }
 
     @Test("A v2 library upgrades in place, and its sessions keep their anchors")
@@ -79,7 +124,7 @@ struct MigrationTests {
         }
         let store = try LibraryStore(url: url)
         let session = try #require(try await store.latestSession())
-        #expect(session.scope.path == "Photos")
+        #expect(session.scope?.path == "Photos")
         #expect(session.anchor == AssetID(rawValue: 7))
         #expect(session.current == AssetID(rawValue: 7))
         #expect(session.anchorPosition == nil)

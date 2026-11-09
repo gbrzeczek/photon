@@ -79,6 +79,7 @@ extension BrowserModel: ViewerHost {
     /// The name comes from the library, so it needs no disk and works offline.
     func viewerDidSettle(row: Int) {
         guard row < result.count else { return }
+        inspect(AssetID(rawValue: result.assetIDs[row]), immediately: true)
         let instance = result.instanceIDs[row]
         let store = library.store
         captionTask?.cancel()

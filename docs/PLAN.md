@@ -2,7 +2,7 @@
 
 Photon is a native macOS browser for photos and videos stored in local folders and on removable media. This document records the product scope, architecture, milestones and open risks.
 
-**Status:** Milestone 4 is built and checked on disk images, with no physical pull by the user's decision, and measured on a real screen on a seeded 100k library and on the T7 Touch's real library of 27,235 assets. See [Milestone 4 results](#milestone-4-results), [Milestone 3 results](#milestone-3-results) and [Milestone 2 results](#milestone-2-results). The drive doesn't hold 100k files, so those two libraries together stand in for a 100k library on the drive. Spike code lives in [`Spikes/`](../Spikes/README.md), and results are under [Milestone 0 spikes](#milestone-0-spikes) and [Milestone 1 results](#milestone-1-results).
+**Status:** Milestone 5, organization, is built, and favorites survive moving a library to a new drive on disk images. See [Milestone 5 results](#milestone-5-results). Milestone 4 is built and checked on disk images, with no physical pull by the user's decision, and measured on a real screen on a seeded 100k library and on the T7 Touch's real library of 27,235 assets. See [Milestone 4 results](#milestone-4-results), [Milestone 3 results](#milestone-3-results) and [Milestone 2 results](#milestone-2-results). The drive doesn't hold 100k files, so those two libraries together stand in for a 100k library on the drive. Spike code lives in [`Spikes/`](../Spikes/README.md), and results are under [Milestone 0 spikes](#milestone-0-spikes) and [Milestone 1 results](#milestone-1-results).
 
 ## Product scope
 
@@ -151,7 +151,7 @@ Indexing runs in stages, and each stage is resumable:
 4. **Hashing:** sampled content hash.
 5. **Pairing:** RAW+JPEG and Live Photo stacks.
 
-Enumeration writes rows only for what differs, one directory at a time, so an unchanged rescan writes nothing and opens no files. Everything left to do is stored as pending rows, so a run can stop at any point and the next one carries on. Milestone 1 covers stages 1, 2 and 4, and Milestone 2 stage 3. Pairing arrives with the stacks feature in Milestone 5.
+Enumeration writes rows only for what differs, one directory at a time, so an unchanged rescan writes nothing and opens no files. Everything left to do is stored as pending rows, so a run can stop at any point and the next one carries on. Milestone 1 covers stages 1, 2 and 4, Milestone 2 stage 3, and Milestone 5 stage 5. Pairing runs at the end of every indexing run, from the database alone. See [Organization](#organization).
 
 Thumbnails run after hashing rather than in the same read, in two passes: embedded previews for every photo, then full reads. A tile on screen doesn't wait: it runs both for its own asset at visible priority. Waiting for the hash means an exact duplicate is never decoded twice.
 
@@ -222,7 +222,7 @@ First-time indexing takes about 30 minutes per 100k photos at full speed, and ab
 - **Zoom** is a multiple of fit, and the center is a point on the photo, so neither depends on which decoded size is showing. A step stops at actual size. Zoom goes up to 8× actual size, and returns to fit on moving to another photo.
 - **Zoom controls.** A pinch, a double click, Command-Equals and Command-Minus, and two buttons in the toolbar where the tile size slider sits in the browser. A mouse wheel zooms around the pointer, because a mouse has no pinch, and so does any scroll with Command or Option held. A scroll's zoom eases toward where the notches add up to, frame by frame, finishing in about 180 ms, and Reduce Motion goes straight there. A pinch stays exact, since it follows the fingers. A trackpad's plain scroll still pans and swipes.
 - **Title.** The window's title shows the file name, and its subtitle the capture date, the way Preview shows a document. It comes from the library, so it works offline, and it waits for a held key like the status bar does. It sets the title through a modifier, so that a new photo doesn't run `BrowserShell`'s body. The folder's name comes back on closing.
-- **More Info** is the inspector, which is Milestone 5, so the context menu doesn't have it yet.
+- **More Info** in the context menu shows the inspector, which follows the photo showing.
 - **Limits.** Decoding stops at 16,384 px on the long edge, the texture limit, and at 120 MP. A larger photo shows smaller. That's 480 MB at 8 bits, and twice that for HDR.
 - **HDR** decodes with `kCGImageSourceDecodeToHDR` into half-float pixels in extended linear P3. The surface is tagged with `kIOSurfaceContentHeadroom`, and the layer sets `preferredDynamicRange = .high`, so extended range is only used for photos that have it. Thumbnails stay SDR, so an HDR photo brightens when its preview lands.
 - **Transitions** fly in Core Animation, from the tile's crop to the whole photo and back, so they don't depend on the main thread. Reduce Motion replaces them with a fade.
@@ -244,6 +244,70 @@ One shared command serves grid, list and viewer. The pasteboard carries file URL
 
 **Dragging** starts from a selected tile, a selected list row or the photo in the viewer at fit, and offers copying only, so a drop can never move or delete an original. The files' URLs are fetched when the button goes down, because a drag has to start at once. A drag has at most 16 dragging items. AppKit walks them on worker threads, which is why `isFlipped` on a drag source must stay `nonisolated`: a main-actor getter crashes there, and only on large selections. The other files go straight onto the drag's pasteboard, off the main thread, so a drop in the first moments of a very large drag may carry only some of them.
 
+### Organization
+
+Favorites, albums, tags and stacks attach to assets, and live in the library on the internal disk. None of them reads or writes a file, so all of them work the same on offline and read-only volumes. A file that's offline still shows in an album, from its stored thumbnail, and can be favorited and tagged.
+
+**Sources.** What the browser shows is a source: a folder, All Items, Favorites, an album, a smart album or a tag. Grid, list and viewer don't know which, because each one is a query giving the same `BrowseResult`. A source other than a folder spans volumes, so each asset's row prefers a file on a volume that's online, and the status bar only names a volume for a folder.
+
+**Sidebar**, from the top, as in Photos and Finder:
+
+| Section | Rows | Actions |
+|---|---|---|
+| Library | All Items, Favorites | |
+| Albums | Manual and smart albums, by name. A smart album has its own symbol | New Album, New Smart Album, Rename, Edit Smart Album, Delete Album, from the File menu and the context menu |
+| Tags | Every tag, by name | Rename, Delete Tag, from the context menu |
+| Folders | Library roots and their folders, as before | Eject |
+
+Deleting an album or a tag never touches a file. It asks first, because the album can't come back.
+
+**Favorites.** Period toggles the photo in the viewer, or else the selection, or else the current item, which is what Copy acts on. If any of them isn't a favorite, all of them become favorites. Otherwise, all of them stop being favorites, as in Photos. It's also in the Image menu, the context menu, the toolbar and the inspector. A favorite has a heart on its tile and in the list. Unfavoriting in Favorites removes the tile, and the current item moves to its neighbor.
+
+**Albums** hold assets, never files. Add to Album, in the Image menu and the context menu, lists the albums and New Album. In a manual album, Remove from Album is in the same menus, and on Delete. An album sorts with the usual sort keys, and has no manual order yet.
+
+**Tags** are names, unique ignoring case. The inspector adds one by typing, with completion from existing tags, and removes one from its token. The context menu's Tags submenu toggles any existing tag on the selection.
+
+**Smart albums** are saved queries, stored as JSON in `albums.smart_query`. A query is "match all" or "match any" of a list of rules, as in Photos' and Finder's smart folders:
+
+| Field | Operators |
+|---|---|
+| Favorite | is, is not |
+| Kind | is photo, is video |
+| Tag | is, is not |
+| Album | is in, is not in, manual albums only |
+| File name, folder | contains, doesn't contain |
+| File type | is, the extension |
+| Capture date | in the last N days, before, after, in year |
+| Duration | longer than, shorter than, in seconds |
+
+The editor is a sheet with the album's name, a Match All or Any pop-up, and a row of pop-ups and a value per rule, with add and remove buttons. Rules compile to SQL in `PhotonCore`, so the UI never sees SQL. A rule this version doesn't know makes the album show nothing, and the editor says it can't edit it, so that an older Photon never rewrites a newer query.
+
+**Search.** Command-F goes to the search field in the toolbar, and typing filters what's showing, after a short pause. Escape clears it, and choosing another source clears it too. Search the whole library from All Items. Words are separated by spaces, and every word must match one of:
+
+- the file name or folder path, anywhere in it, ignoring case
+- the start of a tag's or a manual album's name
+- photo, photos, video or videos
+- a year of capture, such as 2024, or a month's name in English or the current language
+
+It runs in the library, so it works offline. It isn't saved with the session.
+
+**Stacks** come from pairing, the last stage of indexing, by name alone: two files in the same folder of one volume, with the same name before the extension, ignoring case.
+
+| Pair | Stack | Cover |
+|---|---|---|
+| A RAW file and a JPEG or HEIC | RAW+JPEG | The JPEG or HEIC, because it's the camera's own rendering and it decodes everywhere |
+| A JPEG or HEIC and a MOV or MP4 of at most 4 seconds | Live Photo | The photo |
+
+An asset is in at most one stack. Pairing compares what it finds with what's stored and writes only the difference, so an unchanged rescan still writes nothing. It works from the database, so it never reads a file.
+
+A stack shows as one tile, its cover, with a badge for its kind, in the grid, the list and the viewer. A member is only hidden when its cover is in the same result, so a favorite RAW whose JPEG isn't a favorite still shows in Favorites. View → Expand Stacks shows every member as its own tile, everywhere. The inspector lists the stack's members. Copy and drag act on the cover alone while a stack is collapsed. A Live Photo's motion plays from Milestone 6.
+
+**Inspector.** Command-I, View → Show Inspector, the toolbar's info button, or More Info in the context menu. It's a column at the trailing edge, beside grid, list and viewer, and it describes the photo in the viewer, or else the current item. It shows the name, kind and format, pixel dimensions, size, capture date, duration, favorite, tags, the albums holding it, its stack, and every file holding the content, by volume and path. A file on an offline volume says Offline, and a read-only one says Read Only. It reads only the library, and it waits for a held key like the status bar.
+
+**Sessions** are saved for every source, not only folders, so the last album or tag reopens at launch. A deleted album or tag takes its session with it, and launch falls back to the first folder.
+
+**Moving a library to a new drive** is tested on disk images: index an exFAT image, favorite, tag and add to an album, detach it, copy the same files to a second image with its own UUID under a different folder layout, some of them renamed, and index that. Every favorite, tag and album must follow the content to the new image, with rows on the new image's files, both with the old image gone and with it back.
+
 ### Keyboard navigation
 
 Keyboard navigation is built alongside the grid, list and viewer, not added during polish. It covers everyday browsing, and other tasks may need the mouse.
@@ -260,7 +324,7 @@ Keyboard navigation is built alongside the grid, list and viewer, not added duri
 - Common actions appear in the menu bar with their shortcuts, so that they're discoverable.
 - Shortcuts are tested on non-US keyboard layouts.
 
-**Shortcuts.** Some rows have no effect yet: favorites, search and the inspector are Milestone 5, video is Milestone 6, and rename and trash need the file operations layer. Rotation has no milestone yet. The checks against Photos and Finder, and on non-US layouts, haven't been done.
+**Shortcuts.** Some rows have no effect yet: video is Milestone 6, and rename and trash need the file operations layer. Rotation has no milestone yet. The checks against Photos and Finder, and on non-US layouts, haven't been done.
 
 | Context | Key | Action |
 |---|---|---|
@@ -276,9 +340,11 @@ Keyboard navigation is built alongside the grid, list and viewer, not added duri
 | Everywhere | Cmd-1, Cmd-2 | Tile view, list view |
 | Everywhere | Cmd-C | Copy |
 | Everywhere | Cmd-E | Eject the volume holding this folder |
-| Everywhere | Period | Toggle favorite |
+| Grid, list and viewer | Period | Toggle favorite. Not a menu shortcut, so that a period in the search field stays text |
+| Grid and list | Delete | Remove from album, in a manual album only. Not a menu shortcut, for the same reason |
 | Everywhere | Cmd-I | Show or hide the inspector |
 | Everywhere | Cmd-F | Search |
+| Everywhere | Cmd-N, Cmd-Option-N | New album, new smart album |
 | Everywhere | Cmd-R, Cmd-Option-R | Rotate right, rotate left (non-destructive) |
 | Everywhere | Cmd-Shift-R | Rename |
 | Everywhere | Cmd-Delete | Move to Trash |
@@ -355,9 +421,19 @@ These are targets for an M4 Max. The figures below are from a release build on a
 
 Milestone 4's figures, with the first-pass frames over budget, are in [Milestone 4 results](#milestone-4-results).
 
-The spike's in-app timers reported no missed frames in the same scenarios where Instruments found these hitches. Don't rely on the in-app numbers alone.
+The spike's in-app timers reported no missed frames in the same scenarios where Instruments found these hitches, so the in-app numbers can miss a problem. They're still the routine check, because a full trace on every milestone cost more than it found.
 
 Budgets are tracked with `os_signpost` and automated performance tests on a synthetic library, starting in Milestone 1.
+
+### How milestones are measured
+
+By the user's request from Milestone 5 on, to spend less time on measurement and more on features:
+
+- **The budgets are targets.** An occasional single frame over the 8 ms main-thread budget, or a launch a little over target in one run, is acceptable without a fix or a recorded decision. Only a repeatable regression needs one: the same scenario over budget again on a second run.
+- **One quick pass.** A milestone that touches the grid, list, viewer or launch gets one run of `PHOTON_PERF_OUT` on the seeded 100k library, on one display. A milestone that touches none of them needs no measurement.
+- **No repeats by default.** A run is repeated only to check whether something over budget is repeatable.
+- **Instruments only for a real problem.** An Animation Hitches trace is recorded only when the in-app timers show one.
+- **The T7 Touch library is optional.** Measuring on the real drive is welcome, read-only as always, but no milestone needs it.
 
 ## Milestones
 
@@ -516,6 +592,36 @@ The tool was first validated on an exFAT disk image, and those numbers are in `S
 - **Why it works:** a self-signed certificate gives a designated requirement of bundle identifier plus certificate, which stayed identical across rebuilds. Ad-hoc signing gives a `cdhash` requirement, which changes on every build.
 - **Also confirmed:** `codesign` works with an untrusted certificate when given its SHA-1 hash and keychain, so CI doesn't need to trust it. Local builds ran, even though `spctl` rejects them.
 - **Testing note:** disk images aren't gated by TCC at all, so this check always needs a real drive.
+
+### Milestone 5 results
+
+Organization is built as designed in [Organization](#organization): favorites, albums, tags, smart albums, search, stacks and the inspector, with sessions for every source. The schema moved to v4, which rebuilds `sessions` so that All Items, Favorites and tags can have one, with a migration test from v3.
+
+**Done when favorites survive moving a library to a new drive.** `DriveMoveTests`, on two exFAT disk images: 40 files indexed on one, with 5 favorites, a tag on 5, a manual album of 4 and a smart album, then copied to a second image with its own UUID, into another folder layout with a third of them renamed. With the first image detached, all 40 merged into their assets, no asset was added, and every favorite, tag, album and smart album showed the same content, from the new image's files. With both attached, nothing changed, and the inspector listed both copies. The real drive was never involved.
+
+**Tests:** 442 Swift Testing tests pass, up from 412: 19 new in `PhotonCore` for organization and the v4 migration, 9 through real key events in `PhotonUITests`, an offscreen render of the sidebar and inspector, and the drive move on disk images. `OrganizationUITests` adds XCUITests for Period in the grid and the viewer, Command-I, and Command-F with a period typed into the search field. They weren't run, because the screen was locked for the whole session.
+
+**Light and dark**, rendered offscreen with the screen locked: the sidebar and the inspector through `NSHostingView`, and the grid's heart marks through `CARenderer`, in both appearances. A selected sidebar row draws black in an offscreen render, which is the render, not the app. Nothing was looked at on a real screen.
+
+**Performance:** one pass with `PHOTON_PERF_OUT` on the seeded 100k library, on the Retina display, release build, with the screen locked. Launch to the result was 350 ms and opening a folder 77 ms. The grid scenarios ran at 119.1–120 fps with a worst main-thread frame of 2.9 ms and 426 MB. The list and viewer scenarios hadn't finished when the run was stopped at 4 minutes, and launch to the first frame isn't meaningful while the screen is locked, so this pass should be repeated on an unlocked screen. The grid adds only a small mark layer per tile, and a source's query is the same single pass as a folder's.
+
+What building it found, and fixed:
+
+- **A menu shortcut with no modifier takes the key from text fields.** Period and Delete as Image menu shortcuts would have favorited the selection, or removed it from an album, while typing in the search field. Grid, list and viewer handle them instead, and the context menu shows them.
+- **A source spanning volumes picked a file at random** for each asset, which could be one on an offline drive while another copy was online. Rows now prefer an online volume's file, and reload when a volume comes or goes.
+- **The toggle query's arguments were out of order**, so the first press did nothing. A test caught it.
+
+**Not verified:**
+
+- Anything on a real screen: the XCUITests, the search field's Command-F against the system's own Find item, the inspector's tag completion, the smart album sheet, and the new menus.
+- The list and viewer performance scenarios, and launch to the first frame.
+- Stacks from real camera files. Pairing was tested with synthetic files, a RAW copy made by renaming a JPEG.
+
+**Not built:**
+
+- Favoriting or tagging an unhashed file doesn't hash it at once yet. Merging keeps organization data from both sides, so nothing is lost when hashing reaches it, but a provisional asset whose only file goes before it's hashed loses its favorite.
+- Albums have no manual order, and items can't be dragged onto an album in the sidebar.
+- A Live Photo's motion, which needs Milestone 6.
 
 ### Milestone 4 results
 

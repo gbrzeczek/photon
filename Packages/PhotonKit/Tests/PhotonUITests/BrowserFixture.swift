@@ -256,5 +256,7 @@ final class BrowserFixture {
         static let end = Key(code: 119, scalar: NSEndFunctionKey, flags: [.function])
         static let pageUp = Key(code: 116, scalar: NSPageUpFunctionKey, flags: [.function])
         static let pageDown = Key(code: 121, scalar: NSPageDownFunctionKey, flags: [.function])
+        static let period = Key(code: 47, scalar: 46, flags: [])
+        static let delete = Key(code: 51, scalar: NSDeleteCharacter, flags: [])
     }
 }

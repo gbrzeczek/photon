@@ -22,6 +22,10 @@ enum BrowserKeys {
             }
             guard plain else { return false }
             switch key {
+            case .delete, .deleteForward:
+                // Remove from Album, in a manual album. Nothing happens to files anywhere.
+                guard !extending, model.currentManualAlbum != nil else { return false }
+                model.removeFromAlbum()
             case .carriageReturn, .enter:
                 guard !extending else { return false }
                 model.openViewer()
@@ -39,6 +43,12 @@ enum BrowserKeys {
         }
         if plain, !extending, event.charactersIgnoringModifiers == " " {
             model.openViewer()
+            return true
+        }
+        // Matched by character, so it's the period key wherever a layout puts it. Not a menu shortcut,
+        // because a menu would take it from the search field too.
+        if plain, !extending, event.charactersIgnoringModifiers == "." {
+            model.toggleFavorite()
             return true
         }
         guard typeToSelect, plain, let characters = event.charactersIgnoringModifiers, !characters.isEmpty,
@@ -67,6 +77,10 @@ enum ViewerKeys {
             return true
         }
         guard flags.isEmpty else { return false }
+        if event.charactersIgnoringModifiers == "." {
+            model.toggleFavorite()
+            return true
+        }
         if event.charactersIgnoringModifiers == " " {
             // Space is a quick look toggle. For a video it'll play and pause, once videos play.
             model.closeViewer()

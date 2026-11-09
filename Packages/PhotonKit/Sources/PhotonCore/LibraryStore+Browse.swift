@@ -6,15 +6,25 @@ extension LibraryStore {
     /// because that takes milliseconds at 100k rows and an `ORDER BY` over this join doesn't.
     /// Run it off the main thread: the cost grows with the folder.
     public func browse(_ scope: BrowseScope, sort: BrowseSort) async throws -> BrowseResult {
+        try await browse(.folder(scope), sort: sort)
+    }
+
+    /// Runs a sorted query over any source, filtered by a search and with stacks collapsed unless asked.
+    public func browse(
+        _ source: BrowseSource, sort: BrowseSort, options: BrowseOptions = BrowseOptions()
+    ) async throws -> BrowseResult {
         let usesNames = sort.key == .name || sort.key == .type
-        let columns = BrowseColumns.fetchSQL(scope: scope, names: usesNames)
+        let search = SearchQuery(options.search)
         let raw = try await pool.read { db in
+            let filter = AssetFilter.and([try AssetFilter.source(source, db), AssetFilter.search(search)])
+            let columns = BrowseColumns.fetchSQL(filter: filter, names: usesNames)
             var columnsOut = BrowseColumns()
             let rows = try Row.fetchCursor(db, sql: columns.sql, arguments: StatementArguments(columns.arguments))
             while let row = try rows.next() { columnsOut.append(row, names: usesNames, sort: sort.key) }
+            if !options.expandsStacks { columnsOut.stacks = try StackMap.fetch(db) }
             return columnsOut
         }
-        return raw.sorted(by: sort)
+        return raw.sorted(by: sort, preferring: options.preferredVolumes)
     }
 
     /// Full rows, in the order of `instances`. Bounded by the caller's page size.
@@ -57,19 +67,7 @@ extension LibraryStore {
     /// Instances in `scope` whose names start with `prefix`, ignoring case, best match first.
     /// For jumping to a typed name.
     public func instances(in scope: BrowseScope, namePrefix prefix: String, limit: Int) async throws -> [Int64] {
-        // LIKE treats these as wildcards, and a typed name means them literally.
-        let escaped = prefix.replacing("\\", with: "\\\\").replacing("%", with: "\\%").replacing("_", with: "\\_")
-        let filter = BrowseColumns.filter(scope, alias: "f")
-        return try await pool.read { db in
-            try Int64.fetchAll(
-                db,
-                sql: """
-                    SELECT f.id FROM file_instances f
-                    WHERE \(filter.sql) AND f.name LIKE ? ESCAPE '\\'
-                    ORDER BY f.name COLLATE NOCASE LIMIT ?
-                    """,
-                arguments: StatementArguments(filter.arguments + [(escaped + "%").databaseValue, limit.databaseValue]))
-        }
+        try await instances(in: .folder(scope), namePrefix: prefix, limit: limit)
     }
 
     /// Every root, and every folder holding indexed files, in path order.
@@ -108,63 +106,123 @@ extension LibraryStore {
     // MARK: Sessions
 
     public func session(for scope: BrowseScope) async throws -> BrowseSession? {
-        try await pool.read { db in
-            try Row.fetchOne(
-                db, sql: "SELECT * FROM sessions WHERE volume_id = ? AND relative_path = ?",
-                arguments: [scope.volume.rawValue, scope.path]
-            ).map(Self.session)
+        try await session(for: .folder(scope))
+    }
+
+    public func session(for source: BrowseSource) async throws -> BrowseSession? {
+        let key = SessionKey(source)
+        return try await pool.read { db in
+            try Row.fetchOne(db, sql: "SELECT * FROM sessions WHERE \(key.sql)", arguments: StatementArguments(key.arguments))
+                .flatMap(Self.session)
         }
     }
 
-    /// The folder used last, to reopen at launch.
+    /// The source used last, to reopen at launch.
     public func latestSession() async throws -> BrowseSession? {
         try await pool.read { db in
-            try Row.fetchOne(
-                db, sql: "SELECT * FROM sessions WHERE volume_id IS NOT NULL ORDER BY updated_at DESC, id DESC LIMIT 1"
-            ).map(Self.session)
+            try Row.fetchOne(db, sql: "SELECT * FROM sessions ORDER BY updated_at DESC, id DESC LIMIT 1")
+                .flatMap(Self.session)
         }
     }
 
     public func saveSession(_ session: BrowseSession, now: Date = Date()) async throws {
+        let key = SessionKey(session.source)
         try await pool.write { db in
+            // The anchor and the current item may have been merged away since they were read.
+            let values: StatementArguments = [
+                session.sort.key.rawValue, session.sort.ascending, session.viewMode, session.tileSize,
+                session.anchor?.rawValue, session.anchorPosition, session.current?.rawValue, session.isViewerOpen,
+                now.timeIntervalSince1970,
+            ]
+            try db.execute(
+                sql: """
+                    UPDATE sessions SET sort_key = ?, sort_ascending = ?, view_mode = ?, tile_size = ?,
+                        anchor_asset_id = (SELECT id FROM assets WHERE id = ?), anchor_position = ?,
+                        current_asset_id = (SELECT id FROM assets WHERE id = ?), viewer_open = ?, updated_at = ?
+                    WHERE \(key.sql)
+                    """,
+                arguments: values + StatementArguments(key.arguments))
+            guard db.changesCount == 0 else { return }
+            // An album or tag deleted since leaves nothing to save against.
+            if case .album(let album) = session.source,
+                try Int.fetchOne(db, sql: "SELECT 1 FROM albums WHERE id = ?", arguments: [album.rawValue]) == nil
+            {
+                return
+            }
+            if case .tag(let tag) = session.source,
+                try Int.fetchOne(db, sql: "SELECT 1 FROM tags WHERE id = ?", arguments: [tag.rawValue]) == nil
+            {
+                return
+            }
             try db.execute(
                 sql: """
                     INSERT INTO sessions
-                        (volume_id, relative_path, sort_key, sort_ascending, view_mode, tile_size, anchor_asset_id,
+                        (volume_id, relative_path, album_id, tag_id, library_source,
+                         sort_key, sort_ascending, view_mode, tile_size, anchor_asset_id,
                          anchor_position, current_asset_id, viewer_open, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?,
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,
                         (SELECT id FROM assets WHERE id = ?), ?,
                         (SELECT id FROM assets WHERE id = ?), ?, ?)
-                    ON CONFLICT (volume_id, relative_path) WHERE volume_id IS NOT NULL DO UPDATE SET
-                        sort_key = excluded.sort_key,
-                        sort_ascending = excluded.sort_ascending,
-                        view_mode = excluded.view_mode,
-                        tile_size = excluded.tile_size,
-                        anchor_asset_id = excluded.anchor_asset_id,
-                        anchor_position = excluded.anchor_position,
-                        current_asset_id = excluded.current_asset_id,
-                        viewer_open = excluded.viewer_open,
-                        updated_at = excluded.updated_at
                     """,
-                arguments: [
-                    session.scope.volume.rawValue, session.scope.path, session.sort.key.rawValue,
-                    session.sort.ascending, session.viewMode, session.tileSize, session.anchor?.rawValue,
-                    session.anchorPosition, session.current?.rawValue, session.isViewerOpen,
-                    now.timeIntervalSince1970,
-                ])
+                arguments: StatementArguments(key.columns) + values)
         }
     }
 
-    private static func session(_ row: Row) -> BrowseSession {
+    private static func session(_ row: Row) -> BrowseSession? {
         let anchor: Int64? = row["anchor_asset_id"]
         let current: Int64? = row["current_asset_id"]
+        guard let source = SessionKey.source(row) else { return nil }
         return BrowseSession(
-            scope: BrowseScope(volume: VolumeID(rawValue: row["volume_id"]), path: row["relative_path"]),
+            source: source,
             sort: BrowseSort(
                 key: SortKey(rawValue: row["sort_key"]) ?? .date, ascending: row["sort_ascending"]),
             viewMode: row["view_mode"], tileSize: row["tile_size"],
             anchor: anchor.map(AssetID.init(rawValue:)), anchorPosition: row["anchor_position"],
             current: current.map(AssetID.init(rawValue:)), isViewerOpen: row["viewer_open"])
+    }
+}
+
+/// Which `sessions` row belongs to a source.
+private struct SessionKey {
+    var sql: String
+    var arguments: [DatabaseValue]
+    /// volume_id, relative_path, album_id, tag_id, library_source.
+    var columns: [DatabaseValue]
+
+    init(_ source: BrowseSource) {
+        let null = DatabaseValue.null
+        switch source {
+        case .folder(let scope):
+            sql = "volume_id = ? AND relative_path = ?"
+            arguments = [scope.volume.rawValue.databaseValue, scope.path.databaseValue]
+            columns = arguments + [null, null, null]
+        case .album(let album):
+            sql = "album_id = ?"
+            arguments = [album.rawValue.databaseValue]
+            columns = [null, null, album.rawValue.databaseValue, null, null]
+        case .tag(let tag):
+            sql = "tag_id = ?"
+            arguments = [tag.rawValue.databaseValue]
+            columns = [null, null, null, tag.rawValue.databaseValue, null]
+        case .allItems, .favorites:
+            let value = (source == .allItems ? 1 : 2).databaseValue
+            sql = "library_source = ?"
+            arguments = [value]
+            columns = [null, null, null, null, value]
+        }
+    }
+
+    static func source(_ row: Row) -> BrowseSource? {
+        if let volume: Int64 = row["volume_id"], let path: String = row["relative_path"] {
+            return .folder(BrowseScope(volume: VolumeID(rawValue: volume), path: path))
+        }
+        if let album: Int64 = row["album_id"] { return .album(AlbumID(rawValue: album)) }
+        if let tag: Int64 = row["tag_id"] { return .tag(TagID(rawValue: tag)) }
+        switch row["library_source"] as Int? {
+        case 1: return .allItems
+        case 2: return .favorites
+        default: return nil
+        }
     }
 }
 
@@ -176,6 +234,9 @@ struct BrowseColumns: Sendable {
     private var colors: [UInt32] = []
     private var flags: [BrowseResult.Flags] = []
     private var durations: [Float] = []
+    private var volumes: [Int64] = []
+    /// Stacks to collapse, or nil to show every member.
+    var stacks: StackMap?
     /// One value per row for the numeric sorts.
     private var numericKeys: [Int64] = []
     /// Keys one after another for the text sorts, with where each row's starts.
@@ -198,12 +259,11 @@ struct BrowseColumns: Sendable {
         )
     }
 
-    static func fetchSQL(scope: BrowseScope, names: Bool) -> (sql: String, arguments: [DatabaseValue]) {
-        let filter = filter(scope, alias: "f")
-        return (
+    static func fetchSQL(filter: AssetFilter, names: Bool) -> (sql: String, arguments: [DatabaseValue]) {
+        (
             """
             SELECT f.id, f.asset_id, f.size, f.modified_ns, a.kind, a.width, a.height, a.orientation, a.rotation,
-                a.capture_date_ms, a.duration_seconds, a.dominant_color\(names ? ", f.name" : "")
+                a.capture_date_ms, a.duration_seconds, a.dominant_color, f.volume_id, a.is_favorite\(names ? ", f.name" : "")
             FROM file_instances f JOIN assets a ON a.id = f.asset_id
             WHERE \(filter.sql)
             """,
@@ -218,9 +278,11 @@ struct BrowseColumns: Sendable {
         let color: Int64? = row[11]
         var rowFlags: BrowseResult.Flags = kind == MediaKind.video.rawValue ? .video : []
         if color != nil { rowFlags.insert(.hasColor) }
+        if row[13] as Bool { rowFlags.insert(.favorite) }
 
         instances.append(row[0])
         assets.append(row[1])
+        volumes.append(row[12])
         aspects.append(Self.aspect(
             width: row[5], height: row[6], orientation: row[7], rotation: row[8], isVideo: rowFlags.contains(.video)))
         colors.append(UInt32(truncatingIfNeeded: color ?? 0))
@@ -237,7 +299,7 @@ struct BrowseColumns: Sendable {
         case .duration:
             numericKeys.append(duration.map { Int64($0 * 1000) } ?? -1)
         case .name, .type:
-            let name: String = row[12]
+            let name: String = row[14]
             textOffsets.append(Int32(textKeys.count))
             if sort == .type {
                 let fileExtension = RelativePath(directory: "", name: name).fileExtension.lowercased()
@@ -256,8 +318,10 @@ struct BrowseColumns: Sendable {
         return min(max(aspect, aspectRange.lowerBound), aspectRange.upperBound)
     }
 
-    func sorted(by sort: BrowseSort) -> BrowseResult {
-        var order = uniqueRows()
+    func sorted(by sort: BrowseSort, preferring preferred: Set<VolumeID> = []) -> BrowseResult {
+        var order = uniqueRows(preferring: preferred)
+        var flags = flags
+        if let stacks { order = stacks.collapse(order, assets: assets, flags: &flags) }
         switch sort.key {
         case .date, .size, .duration:
             numericKeys.withUnsafeBufferPointer { keys in
@@ -297,22 +361,80 @@ struct BrowseColumns: Sendable {
             durations: order.map { durations[Int($0)] })
     }
 
-    /// Rows to keep: the first of each asset, as a list of row numbers. A bitmap over the id range is
-    /// much cheaper than a set, and ids are dense.
-    private func uniqueRows() -> [Int32] {
+    /// Rows to keep: one for each asset, the first on a preferred volume if any, else the first. A bitmap
+    /// over the id range is much cheaper than a set, and ids are dense.
+    private func uniqueRows(preferring preferred: Set<VolumeID>) -> [Int32] {
         guard let lowest = assets.min(), let highest = assets.max() else { return [] }
         let range = Int(highest - lowest) + 1
         var seen = [UInt64](repeating: 0, count: range / 64 + 1)
         var rows: [Int32] = []
         rows.reserveCapacity(assets.count)
-        for (row, asset) in assets.enumerated() {
-            let bit = Int(asset - lowest)
-            let mask: UInt64 = 1 << UInt64(bit & 63)
-            if seen[bit >> 6] & mask == 0 {
-                seen[bit >> 6] |= mask
-                rows.append(Int32(row))
+        let preferredIDs = Set(preferred.map(\.rawValue))
+        let distinctVolumes = Set(volumes)
+        // One volume, or none preferred among them, needs only one pass. That's every folder.
+        let passes = distinctVolumes.count > 1 && !preferredIDs.isDisjoint(with: distinctVolumes) ? 2 : 1
+        for pass in 0..<passes {
+            for (row, asset) in assets.enumerated() {
+                if passes == 2, (pass == 0) != preferredIDs.contains(volumes[row]) { continue }
+                let bit = Int(asset - lowest)
+                let mask: UInt64 = 1 << UInt64(bit & 63)
+                if seen[bit >> 6] & mask == 0 {
+                    seen[bit >> 6] |= mask
+                    rows.append(Int32(row))
+                }
             }
         }
+        // The second pass appended out of order, and ties sort by row.
+        if passes == 2 { rows.sort() }
         return rows
+    }
+}
+
+/// Which assets cover which, for collapsing stacks. Bounded by the number of stacked assets.
+struct StackMap: Sendable {
+    /// Member asset to its cover. Covers aren't here.
+    var coverOf: [Int64: Int64] = [:]
+    /// Cover asset to its stack's kind.
+    var kindOf: [Int64: StackKind] = [:]
+
+    static func fetch(_ db: Database) throws -> StackMap {
+        var map = StackMap()
+        let rows = try Row.fetchCursor(
+            db,
+            sql: """
+                SELECT s.kind, s.cover_asset_id, m.asset_id FROM stacks s JOIN stack_members m ON m.stack_id = s.id
+                WHERE s.cover_asset_id IS NOT NULL
+                """)
+        while let row = try rows.next() {
+            let cover: Int64 = row[1]
+            let member: Int64 = row[2]
+            if member == cover {
+                if let kind = StackKind(rawValue: row[0]) { map.kindOf[cover] = kind }
+            } else {
+                map.coverOf[member] = cover
+            }
+        }
+        return map
+    }
+
+    /// Drops members whose cover is in the same result, and marks those covers. A member whose cover
+    /// isn't here stays, so a favorite RAW still shows in Favorites without its JPEG.
+    func collapse(_ order: [Int32], assets: [Int64], flags: inout [BrowseResult.Flags]) -> [Int32] {
+        guard !coverOf.isEmpty else { return order }
+        var present = Set<Int64>()
+        present.reserveCapacity(kindOf.count)
+        for row in order where kindOf[assets[Int(row)]] != nil { present.insert(assets[Int(row)]) }
+        guard !present.isEmpty else { return order }
+        var kept: [Int32] = []
+        kept.reserveCapacity(order.count)
+        for row in order {
+            let asset = assets[Int(row)]
+            if let cover = coverOf[asset], present.contains(cover) { continue }
+            if present.contains(asset), let kind = kindOf[asset] {
+                flags[Int(row)].insert(kind == .livePhoto ? .livePhoto : .rawPair)
+            }
+            kept.append(row)
+        }
+        return kept
     }
 }

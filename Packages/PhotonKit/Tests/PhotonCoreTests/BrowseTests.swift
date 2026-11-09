@@ -146,14 +146,14 @@ struct BrowseTests {
             scope: scope(library, "DCIM"), sort: BrowseSort(key: .name, ascending: true), viewMode: 1,
             tileSize: 200, anchor: instance.assetID)
         try await library.store.saveSession(session)
-        #expect(try await library.store.session(for: session.scope) == session)
+        #expect(try await library.store.session(for: session.source) == session)
         #expect(try await library.store.latestSession() == session)
 
         var updated = session
         updated.viewMode = 0
         updated.anchor = AssetID(rawValue: 9999)  // No such asset, such as one merged away.
         try await library.store.saveSession(updated)
-        let stored = try await library.store.session(for: session.scope)
+        let stored = try await library.store.session(for: session.source)
         #expect(stored?.viewMode == 0)
         #expect(stored?.anchor == nil)
     }

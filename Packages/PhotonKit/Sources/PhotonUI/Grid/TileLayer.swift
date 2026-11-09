@@ -12,6 +12,9 @@ final class TileLayer: CALayer {
     /// The update pass that last saw this tile.
     var stamp = 0
     private var badge: CALayer?
+    /// Favorite and stack symbols, at the bottom leading corner.
+    private var mark: CALayer?
+    private(set) var markKey = 0
 
     override func action(forKey event: String) -> (any CAAction)? { nil }
 
@@ -29,9 +32,33 @@ final class TileLayer: CALayer {
     }
 
     func placeBadge() {
+        if let mark, !mark.isHidden {
+            mark.position = CGPoint(x: bounds.minX + mark.bounds.width / 2 + 4, y: bounds.maxY - mark.bounds.height / 2 - 4)
+        }
         guard let badge, !badge.isHidden else { return }
         badge.position = CGPoint(
             x: bounds.maxX - badge.bounds.width / 2 - 4, y: bounds.maxY - badge.bounds.height / 2 - 4)
+    }
+
+    /// `key` says which image this is, so an unchanged mark costs nothing.
+    func setMark(_ image: CGImage?, key: Int, scale: CGFloat) {
+        guard key != markKey || image == nil else { return }
+        markKey = image == nil ? 0 : key
+        guard let image else {
+            mark?.isHidden = true
+            return
+        }
+        let layer = mark ?? {
+            let layer = PlainLayer()
+            addSublayer(layer)
+            mark = layer
+            return layer
+        }()
+        layer.contents = image
+        layer.contentsScale = scale
+        layer.isHidden = false
+        layer.bounds.size = CGSize(width: CGFloat(image.width) / scale, height: CGFloat(image.height) / scale)
+        placeBadge()
     }
 
     private func makeBadge() -> CALayer {
@@ -63,6 +90,59 @@ final class TileArtwork {
     func reset() {
         durations.removeAll()
         videoSymbol = nil
+        marks.removeAll()
+    }
+
+    private var marks: [Int: CGImage] = [:]
+
+    /// Which mark a row needs: a favorite's heart and a collapsed stack's symbol. Zero for none.
+    static func markKey(_ flags: BrowseResult.Flags) -> Int {
+        (flags.contains(.favorite) ? 1 : 0) | (flags.contains(.livePhoto) ? 2 : 0) | (flags.contains(.rawPair) ? 4 : 0)
+    }
+
+    /// White symbols with a soft shadow, so that they read over any picture, as in Photos.
+    func mark(key: Int) -> CGImage? {
+        guard key != 0 else { return nil }
+        if let existing = marks[key] { return existing }
+        var names: [String] = []
+        if key & 1 != 0 { names.append("heart.fill") }
+        if key & 2 != 0 { names.append("livephoto") }
+        if key & 4 != 0 { names.append("square.stack.fill") }
+        let configuration = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
+        let symbols = names.compactMap {
+            NSImage(systemSymbolName: $0, accessibilityDescription: nil)?.withSymbolConfiguration(configuration)
+        }
+        guard !symbols.isEmpty else { return nil }
+        let gap: CGFloat = 4
+        let inset: CGFloat = 3
+        let width = symbols.reduce(0) { $0 + $1.size.width } + gap * CGFloat(symbols.count - 1) + inset * 2
+        let height = (symbols.map(\.size.height).max() ?? 0) + inset * 2
+        guard
+            let context = CGContext(
+                data: nil, width: Int(ceil(width * scale)), height: Int(ceil(height * scale)), bitsPerComponent: 8,
+                bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return nil }
+        context.scaleBy(x: scale, y: scale)
+        context.setShadow(offset: .zero, blur: 2, color: CGColor(gray: 0, alpha: 0.7))
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        var x = inset
+        for symbol in symbols {
+            let rect = CGRect(x: x, y: (height - symbol.size.height) / 2, width: symbol.size.width, height: symbol.size.height)
+            let tinted = NSImage(size: symbol.size, flipped: false) { bounds in
+                symbol.draw(in: bounds)
+                NSColor.white.set()
+                bounds.fill(using: .sourceAtop)
+                return true
+            }
+            tinted.draw(in: rect)
+            x += symbol.size.width + gap
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        let image = context.makeImage()
+        marks[key] = image
+        return image
     }
 
     /// The film symbol that stands in for a video frame until Milestone 6.

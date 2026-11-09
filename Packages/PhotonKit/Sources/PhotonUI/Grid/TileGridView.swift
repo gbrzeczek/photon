@@ -398,6 +398,7 @@ final class TileGridView: NSView, BrowserContent {
         tile.contents = nil
         tile.shownTier = nil
         tile.setBadge(nil, scale: 1)
+        tile.setMark(nil, key: 0, scale: 1)
         tilesByAsset[tile.assetID] = nil
         // The tile may never have asked, but cancelling costs little.
         loader.cancel(AssetID(rawValue: tile.assetID))
@@ -427,6 +428,10 @@ final class TileGridView: NSView, BrowserContent {
         tile.backgroundColor = backgroundColor(row: row)
         tile.opacity = asset == hiddenAsset ? 0 : 1
         setSelected(tile, showsSelected(row))
+        let markKey = TileArtwork.markKey(result.flags[row])
+        if markKey != tile.markKey {
+            tile.setMark(artwork.mark(key: markKey), key: markKey, scale: backingScale)
+        }
 
         if tile.isVideo {
             // Video thumbnails need a frame from the file, which arrives with Milestone 6.

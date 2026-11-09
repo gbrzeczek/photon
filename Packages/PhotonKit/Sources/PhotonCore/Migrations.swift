@@ -3,13 +3,14 @@ internal import GRDB
 /// Schema migrations. Migrations that have shipped are immutable, because user libraries must survive
 /// upgrades: to change the schema, add a new one. `SchemaSnapshotTests` fails if an old one is edited.
 enum LibraryMigrations {
-    static let current = "v3"
+    static let current = "v4"
 
     static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
         migrator.registerMigration("v1") { db in try db.execute(sql: v1) }
         migrator.registerMigration("v2") { db in try db.execute(sql: v2) }
         migrator.registerMigration("v3") { db in try db.execute(sql: v3) }
+        migrator.registerMigration("v4") { db in try db.execute(sql: v4) }
         return migrator
     }
 
@@ -169,5 +170,46 @@ enum LibraryMigrations {
         CREATE INDEX sessions_current ON sessions(current_asset_id);
         -- The anchor was the current item when there was one, and nothing here says which it was.
         UPDATE sessions SET current_asset_id = anchor_asset_id;
+        """
+
+    /// Organization: a session for every source, not only folders and albums, and stacks found by cover.
+    /// SQLite can't change a CHECK constraint, so `sessions` is rebuilt.
+    private static let v4 = """
+        CREATE TABLE sessions_v4 (
+            id INTEGER PRIMARY KEY,
+            volume_id INTEGER REFERENCES volumes(id) ON DELETE CASCADE,
+            relative_path TEXT,
+            album_id INTEGER REFERENCES albums(id) ON DELETE CASCADE,
+            tag_id INTEGER REFERENCES tags(id) ON DELETE CASCADE,
+            -- 1 = All Items, 2 = Favorites.
+            library_source INTEGER,
+            sort_key TEXT NOT NULL,
+            sort_ascending INTEGER NOT NULL DEFAULT 1,
+            view_mode INTEGER NOT NULL DEFAULT 0,
+            tile_size REAL,
+            anchor_asset_id INTEGER REFERENCES assets(id) ON DELETE SET NULL,
+            updated_at REAL NOT NULL,
+            current_asset_id INTEGER REFERENCES assets(id) ON DELETE SET NULL,
+            anchor_position REAL,
+            viewer_open INTEGER NOT NULL DEFAULT 0,
+            CHECK ((volume_id IS NOT NULL AND relative_path IS NOT NULL) OR album_id IS NOT NULL
+                OR tag_id IS NOT NULL OR library_source IS NOT NULL)
+        );
+        INSERT INTO sessions_v4 (id, volume_id, relative_path, album_id, sort_key, sort_ascending, view_mode,
+            tile_size, anchor_asset_id, updated_at, current_asset_id, anchor_position, viewer_open)
+        SELECT id, volume_id, relative_path, album_id, sort_key, sort_ascending, view_mode,
+            tile_size, anchor_asset_id, updated_at, current_asset_id, anchor_position, viewer_open
+        FROM sessions;
+        DROP TABLE sessions;
+        ALTER TABLE sessions_v4 RENAME TO sessions;
+        CREATE UNIQUE INDEX sessions_folder ON sessions(volume_id, relative_path) WHERE volume_id IS NOT NULL;
+        CREATE UNIQUE INDEX sessions_album ON sessions(album_id) WHERE album_id IS NOT NULL;
+        CREATE UNIQUE INDEX sessions_tag ON sessions(tag_id) WHERE tag_id IS NOT NULL;
+        CREATE UNIQUE INDEX sessions_library ON sessions(library_source) WHERE library_source IS NOT NULL;
+        CREATE INDEX sessions_anchor ON sessions(anchor_asset_id);
+        CREATE INDEX sessions_current ON sessions(current_asset_id);
+
+        CREATE INDEX stacks_cover ON stacks(cover_asset_id);
+        CREATE INDEX albums_name ON albums(name COLLATE NOCASE);
         """
 }

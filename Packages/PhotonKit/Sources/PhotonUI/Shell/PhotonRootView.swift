@@ -99,20 +99,35 @@ private struct BrowserShell: View {
 
     var body: some View {
         NavigationSplitView {
-            FolderSidebar(library: library, model: model, addFolder: chooseFolder)
+            LibrarySidebar(library: library, model: model) { model.smartAlbumRequest = SmartAlbumRequest(album: $0) }
                 .navigationSplitViewColumnWidth(min: 180, ideal: 240)
         } detail: {
             detail
+                .inspector(isPresented: Binding(get: { model.isInspectorShown }, set: { model.isInspectorShown = $0 })) {
+                    InspectorView(library: library, model: model)
+                        .inspectorColumnWidth(min: 240, ideal: 280, max: 400)
+                }
         }
         .focusedSceneValue(\.browserModel, model)
         .toolbar { toolbar }
+        .modifier(SearchField(model: model))
         .modifier(WindowTitle(model: model, folder: title))
+        .sheet(item: Binding(get: { model.smartAlbumRequest }, set: { model.smartAlbumRequest = $0 })) { request in
+            SmartAlbumEditor(library: library, model: model, album: request.album)
+        }
     }
 
     private var title: String {
-        guard let scope = model.scope else { return "Photon" }
-        return scope.path.split(separator: "/").last.map(String.init)
-            ?? library.volumes.first { $0.volume.id == scope.volume }?.volume.name ?? "Photon"
+        switch model.source {
+        case nil: return "Photon"
+        case .allItems: return "All Items"
+        case .favorites: return "Favorites"
+        case .album(let id): return library.albums.first { $0.id == id }?.name ?? "Album"
+        case .tag(let id): return library.tags.first { $0.id == id }?.name ?? "Tag"
+        case .folder(let scope):
+            return scope.path.split(separator: "/").last.map(String.init)
+                ?? library.volumes.first { $0.volume.id == scope.volume }?.volume.name ?? "Photon"
+        }
     }
 
     @ViewBuilder
@@ -154,6 +169,11 @@ private struct BrowserShell: View {
             Button("Add Folder…", systemImage: "folder.badge.plus", action: chooseFolder)
                 .disabled(library.isIndexing)
                 .help("Add a folder to the library")
+        }
+        ToolbarItem { FavoriteButton(model: model) }
+        ToolbarItem {
+            Button("Inspector", systemImage: "info.circle") { model.toggleInspector() }
+                .help("Show or hide the inspector")
         }
     }
 
@@ -265,6 +285,41 @@ private struct SizeControl: View {
     }
 }
 
+/// Favorite or unfavorite what the commands act on. Its own view, because its state follows the selection.
+private struct FavoriteButton: View {
+    let model: BrowserModel
+
+    var body: some View {
+        let isFavorite = model.actionStateToken >= 0 && model.actionItemsAreFavorites
+        Button(isFavorite ? "Unfavorite" : "Favorite", systemImage: isFavorite ? "heart.fill" : "heart") {
+            model.toggleFavorite()
+        }
+        .disabled(!model.hasActionItems)
+        .help(isFavorite ? "Remove from Favorites" : "Add to Favorites")
+    }
+}
+
+/// The search field in the toolbar. A modifier with its own text, so that typing doesn't run
+/// `BrowserShell`'s body, and it filters after a short pause.
+private struct SearchField: ViewModifier {
+    let model: BrowserModel
+    @State private var text = ""
+    @FocusState private var isFocused: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .searchable(text: $text, placement: .toolbar, prompt: "Search")
+            .searchFocused($isFocused)
+            .task(id: text) {
+                try? await Task.sleep(for: .milliseconds(200))
+                guard !Task.isCancelled else { return }
+                model.setSearch(text)
+            }
+            .onChange(of: model.source) { text = "" }
+            .onChange(of: model.searchFocusRequest) { isFocused = true }
+    }
+}
+
 /// The folder in the browser, and the photo's name and date in the viewer, as Preview shows a file's.
 /// A modifier, so that a new photo changes the title without running `BrowserShell`'s body.
 private struct WindowTitle: ViewModifier {
@@ -311,59 +366,6 @@ struct SortMenuItems: View {
     }
 }
 
-/// Library roots, with their folders in a tree.
-private struct FolderSidebar: View {
-    let library: BrowserLibrary
-    let model: BrowserModel
-    let addFolder: () -> Void
-
-    private var roots: [FolderNode] {
-        FolderTree.build(library.folders) { root in
-            library.volumes.first { $0.volume.id == root.volume }?.volume.name ?? "Volume"
-        }
-    }
-
-    var body: some View {
-        let selection = Binding<BrowseScope?>(get: { model.scope }, set: { if let scope = $0 { model.open(scope) } })
-        List(selection: selection) {
-            Section("Folders") {
-                OutlineGroup(roots, children: \.children) { node in
-                    row(node)
-                        .tag(node.scope)
-                        .foregroundStyle(isOnline(node) ? .primary : .secondary)
-                        .contextMenu {
-                            if canEject(node) { Button(ejectTitle(node)) { library.eject(node.scope.volume) } }
-                        }
-                }
-            }
-        }
-        .listStyle(.sidebar)
-        .accessibilityIdentifier("photon.sidebar")
-    }
-
-    private func row(_ node: FolderNode) -> some View {
-        HStack {
-            Label(node.name, systemImage: isOnline(node) ? "folder" : "externaldrive.badge.xmark")
-            Spacer()
-            if canEject(node) {
-                Button(ejectTitle(node), systemImage: "eject.fill") { library.eject(node.scope.volume) }
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .help(ejectTitle(node))
-            }
-        }
-    }
-
-    private func isOnline(_ node: FolderNode) -> Bool { library.onlineVolumes.contains(node.scope.volume) }
-
-    private func canEject(_ node: FolderNode) -> Bool {
-        node.isRoot && library.ejectableVolumes.contains(node.scope.volume)
-    }
-
-    private func ejectTitle(_ node: FolderNode) -> String { "Eject “\(library.name(of: node.scope.volume))”" }
-}
-
 /// The app's menus, with their shortcuts. Each one acts on the focused window's browser.
 public struct PhotonCommands: Commands {
     @FocusedValue(\.browserModel) private var model
@@ -379,6 +381,17 @@ public struct PhotonCommands: Commands {
 
     public var body: some Commands {
         CommandGroup(after: .newItem) {
+            Button("New Album…") {
+                if let name = NamePrompt.ask("New Album", message: "", initial: "Untitled Album", action: "Create") {
+                    model?.newAlbum(named: name, addingItems: false)
+                }
+            }
+            .keyboardShortcut("n", modifiers: .command)
+            .disabled(model == nil)
+            Button("New Smart Album…") { model?.smartAlbumRequest = SmartAlbumRequest(album: nil) }
+                .keyboardShortcut("n", modifiers: [.command, .option])
+                .disabled(model == nil)
+            Divider()
             Button(ejectTitle) { model?.ejectVolume() }
                 .keyboardShortcut("e", modifiers: .command)
                 .disabled(model?.canEjectVolume != true)
@@ -418,6 +431,14 @@ public struct PhotonCommands: Commands {
             if let model {
                 Menu("Sort By") { SortMenuItems(model: model) }
             }
+            Toggle(
+                "Expand Stacks",
+                isOn: Binding(get: { model?.expandsStacks == true }, set: { model?.setExpandsStacks($0) })
+            )
+            .disabled(model == nil)
+            Button(model?.isInspectorShown == true ? "Hide Inspector" : "Show Inspector") { model?.toggleInspector() }
+                .keyboardShortcut("i", modifiers: .command)
+                .disabled(model == nil)
             Button("Enclosing Folder") { model?.openParent() }
                 .keyboardShortcut(.upArrow, modifiers: .command)
                 .disabled(model?.canOpenParent != true)
@@ -427,7 +448,53 @@ public struct PhotonCommands: Commands {
             Button("Select None") { model?.selectNone() }
                 .keyboardShortcut("a", modifiers: [.command, .shift])
                 .disabled(model == nil)
+            Divider()
+            Button("Find") { model?.focusSearch() }
+                .keyboardShortcut("f", modifiers: .command)
+                .disabled(model == nil)
+        }
+        CommandMenu("Image") {
+            if let model { ImageMenuItems(model: model) }
         }
         SidebarCommands()
+    }
+}
+
+/// The Image menu: favorites, albums and tags for what the commands act on.
+private struct ImageMenuItems: View {
+    let model: BrowserModel
+
+    var body: some View {
+        let hasItems = model.actionStateToken >= 0 && model.hasActionItems
+        // Period and Delete aren't bound here: a menu takes a key before a text field does, so typing a
+        // period or deleting in the search field would change the library. Grid, list and viewer handle
+        // them, and the context menu shows them.
+        Button(model.actionItemsAreFavorites ? "Unfavorite" : "Favorite") { model.toggleFavorite() }
+            .disabled(!hasItems)
+        Menu("Add to Album") {
+            ForEach(model.library.albums.filter { !$0.isSmart }) { album in
+                Button(album.name) { model.addToAlbum(album.id) }
+            }
+            Divider()
+            Button("New Album…") {
+                if let name = NamePrompt.ask(
+                    "New Album", message: "Add the selected items to a new album.", initial: "Untitled Album",
+                    action: "Create")
+                {
+                    model.newAlbum(named: name, addingItems: true)
+                }
+            }
+        }
+        .disabled(!hasItems)
+        if let album = model.currentManualAlbum {
+            Button("Remove from “\(album.name)”") { model.removeFromAlbum() }
+                .disabled(!hasItems)
+        }
+        Button("Add Tag…") {
+            if let name = NamePrompt.ask("Add Tag", message: "Tag the selected items.", initial: "", action: "Add") {
+                model.addTag(named: name)
+            }
+        }
+        .disabled(!hasItems)
     }
 }
