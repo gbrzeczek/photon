@@ -1,6 +1,8 @@
 #!/bin/bash
-# Imports the signing certificate into a temporary keychain of its own, for the release workflow.
-# The login keychain and the keychain search list are left alone.
+# Imports the signing certificate into a temporary keychain of its own, for the release workflows.
+# Meant for CI runners: it adds that keychain to the user's keychain search list, because codesign
+# didn't find the identity there otherwise, even when given the keychain. Deleting the keychain
+# takes it out of the list again.
 #
 # Usage: PHOTON_SIGNING_CERTIFICATE_P12=<base64> PHOTON_SIGNING_CERTIFICATE_PASSWORD=<password> \
 #          import-signing-certificate.sh <keychain-path>
@@ -26,6 +28,13 @@ security import "$WORK/cert.p12" -k "$KEYCHAIN" -P "$PHOTON_SIGNING_CERTIFICATE_
   -T /usr/bin/codesign >/dev/null
 security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" \
   "$KEYCHAIN" >/dev/null
+EXISTING=()
+while IFS= read -r line; do
+  line="${line#"${line%%[![:space:]]*}"}"; line="${line#\"}"; line="${line%\"}"
+  [ -n "$line" ] && EXISTING+=("$line")
+done < <(security list-keychains -d user)
+security list-keychains -d user -s "$KEYCHAIN" ${EXISTING[@]+"${EXISTING[@]}"}
+security find-identity -p codesigning "$KEYCHAIN" >&2
 
 # The certificate isn't trusted, so it's matched among all identities rather than only valid ones.
 IDENTITIES="$(security find-identity -p codesigning "$KEYCHAIN" \

@@ -921,7 +921,7 @@ At this point `LibraryIndexer` refused any writable external volume, in the app 
 
 1. `scripts/release/make-signing-certificate.sh <dir>` creates a self-signed code-signing certificate with a 20-year expiry, once. Keep using the same one: a granted permission, such as removable-volume access, is tied to the bundle identifier plus the certificate, as [Spike 5](#spike-5-signing) showed, so a new certificate makes everyone grant it again.
 2. It's stored as two repository secrets: `PHOTON_SIGNING_CERTIFICATE_P12`, the base64-encoded `.p12`, and `PHOTON_SIGNING_CERTIFICATE_PASSWORD`. Without them the release job fails, rather than falling back to ad-hoc signing.
-3. `scripts/release/import-signing-certificate.sh` puts it in a keychain of the job's own, which is deleted at the end.
+3. `scripts/release/import-signing-certificate.sh` puts it in a keychain of the job's own, which is deleted at the end. On the runner, `codesign` found the identity only once that keychain was in the user's search list, even when given its path, so the script adds it there.
 4. `scripts/release/build-dmg.sh` builds a universal Release build with Xcode's signing off, signs nested code and then the app with `codesign` and the certificate's SHA-1, checks that the designated requirement names the certificate rather than a `cdhash`, and packs a signed, compressed DMG with a link to Applications. It runs the same way on a Mac.
 5. The workflow tags the commit and creates a GitHub Release with the DMG, its SHA-256, install steps and GitHub's generated notes.
 
