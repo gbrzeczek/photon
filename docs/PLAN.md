@@ -456,12 +456,15 @@ By the user's request from Milestone 5 on, to spend less time on measurement and
 | 4 | **Removable media:** mount handling, offline mode, session restore, eject | Passes the [removable media checks](#removable-media-checks) on disk images: forced detach, injected failures, reconnect and eject |
 | 5 | **Organization:** favorites, albums, tags, smart albums, search, stacks | Favorites survive moving a library to a new drive |
 | 6 | **Video:** AVPlayer, fallback engine, thumbnails, scrub previews | A format test set plays and shows thumbnails |
-| 7 | **Polish and release:** accessibility, Settings, onboarding, signed DMG workflow, screenshots | Ready for daily use, with a tagged release on GitHub |
+| 7a | **Release pipeline:** signed DMG built by GitHub Actions on every push to main | A push to main that passes CI becomes a tagged release on GitHub, with a DMG signed by the self-signed certificate |
+| 7b | **Polish:** accessibility, Settings, onboarding, screenshots | Ready for daily use |
 | 8 | **Duplicates:** near-duplicate detection, similar-scene stacks | Similar scenes collapse into one browsable tile |
 | 9 | **Cloud backup:** JSON export keyed by hash, then encrypted backup of originals | Favorites can be restored after losing a drive |
 | 10 | **Faces:** detection, bundled embedding model, clustering, correction UI | People can be browsed and corrected |
 
 The schema work in Milestone 1 includes the identity model and stacks, even though their features arrive later.
+
+Milestone 7 is split in two, by the user's request: 7a, the release pipeline, needs no Mac to write, so it was built first, and 7b's polish needs the running app.
 
 ### Removable media checks
 
@@ -914,15 +917,25 @@ At this point `LibraryIndexer` refused any writable external volume, in the app 
 
 ## Distribution
 
-Releases are DMGs built by GitHub Actions on a version tag.
+**The user's decision:** every push to main that passes CI becomes a release. This replaces an earlier plan to release on a version tag only. `.github/workflows/release.yml` runs when CI finishes on a push to main, so a release never comes from a commit whose tests failed, and a push whose CI run was cancelled by a newer one makes none. It can also be started by hand on main.
 
-1. Create a self-signed code-signing certificate with a long expiry, and keep using the same one.
-2. Store it as a base64-encoded GitHub secret.
-3. The workflow builds, signs, creates the DMG and attaches it to a GitHub Release.
+1. `scripts/release/make-signing-certificate.sh <dir>` creates a self-signed code-signing certificate with a 20-year expiry, once. Keep using the same one: a granted permission, such as removable-volume access, is tied to the bundle identifier plus the certificate, as [Spike 5](#spike-5-signing) showed, so a new certificate makes everyone grant it again.
+2. It's stored as two repository secrets: `PHOTON_SIGNING_CERTIFICATE_P12`, the base64-encoded `.p12`, and `PHOTON_SIGNING_CERTIFICATE_PASSWORD`. Without them the release job fails, rather than falling back to ad-hoc signing.
+3. `scripts/release/import-signing-certificate.sh` puts it in a keychain of the job's own, which is deleted at the end.
+4. `scripts/release/build-dmg.sh` builds a universal Release build with Xcode's signing off, signs nested code and then the app with `codesign` and the certificate's SHA-1, checks that the designated requirement names the certificate rather than a `cdhash`, and packs a signed, compressed DMG with a link to Applications. It runs the same way on a Mac.
+5. The workflow tags the commit and creates a GitHub Release with the DMG, its SHA-256, install steps and GitHub's generated notes.
 
-Ad-hoc signing isn't used, because permissions can be lost on each rebuild. Downloaded builds aren't notarized, so people have to approve them under System Settings → Privacy & Security → Open Anyway.
+**Versions:** `CFBundleShortVersionString` is `MARKETING_VERSION` from the project, changed by hand. `CFBundleVersion` is the number of commits on main, so it grows with every release and the same commit always gets the same number. The tag is `v<marketing version>.<build number>`, such as `v0.1.412`. A run for a tag that's already released publishes nothing. History on main must never be rewritten, or build numbers could repeat.
 
-Developer ID and notarization can be added later ($99/year). That also needs the hardened runtime, with bundled libraries signed to match.
+Ad-hoc signing isn't used, because permissions can be lost on each rebuild. Downloaded builds aren't notarized, so people have to approve them under System Settings → Privacy & Security → Open Anyway. The hardened runtime stays off, as in the project.
+
+Developer ID and notarization can be added later ($99/year). That also needs the hardened runtime, with bundled libraries signed to match. The libmpv fallback's dylibs will be signed by `build-dmg.sh` as nested code, inside out.
+
+### Milestone 7a results
+
+Built without a Mac, in a Linux session, by the user's request. The scripts pass `shellcheck` and the workflow passes `actionlint`, and the certificate script's OpenSSL half ran on Linux: it makes a code-signing certificate and a `.p12` that reads back with the password.
+
+**Not verified yet:** everything that needs macOS. That's the Release build itself (including its Intel slice, which nothing has built before), `security import` of the `.p12`, signing, the requirement check, the DMG and publishing. The first run on main, after the secrets are added, is the test. Also not checked: whether a release build keeps a removable-volume grant across two releases, which needs the real drive, read-only, as in Spike 5.
 
 ## Future feature notes
 

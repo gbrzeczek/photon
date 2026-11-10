@@ -6,3 +6,8 @@ xcuserdata/
 *.xcuserstate
 *.dmg
 *.sparseimage
+
+# Signing material, which must never be committed
+*.p12
+*.p12.base64
+*.keychain-db

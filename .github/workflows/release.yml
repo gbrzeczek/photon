@@ -1,0 +1,102 @@
+name: Release
+
+# Every push to main that passes CI becomes a signed DMG on GitHub Releases. Running from CI's
+# completion, rather than on push, means a release is never built from a commit whose tests fail,
+# and a push that CI cancelled for a newer one makes no release.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  # Builds main's current commit again, for a run that failed for reasons outside the code.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Releases are made one at a time, in order, and never cancelled halfway.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: >-
+      (github.event_name == 'workflow_run'
+        && github.event.workflow_run.conclusion == 'success'
+        && github.event.workflow_run.event == 'push'
+        && github.event.workflow_run.head_branch == 'main')
+      || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: macos-26
+    timeout-minutes: 30
+    defaults:
+      run:
+        # Adds pipefail, which the default shell leaves out.
+        shell: bash
+    env:
+      COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.COMMIT }}
+          # The build number is the count of commits on main, which needs the whole history.
+          fetch-depth: 0
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+
+      - name: Choose the build number
+        id: build
+        run: echo "number=$(git rev-list --count HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Import the signing certificate
+        id: signing
+        env:
+          PHOTON_SIGNING_CERTIFICATE_P12: ${{ secrets.PHOTON_SIGNING_CERTIFICATE_P12 }}
+          PHOTON_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.PHOTON_SIGNING_CERTIFICATE_PASSWORD }}
+        run: scripts/release/import-signing-certificate.sh "$RUNNER_TEMP/photon-signing.keychain-db" >> "$GITHUB_OUTPUT"
+
+      - name: Build, sign and pack the DMG
+        id: dmg
+        run: >
+          scripts/release/build-dmg.sh
+          --identity "${{ steps.signing.outputs.identity }}"
+          --keychain "$RUNNER_TEMP/photon-signing.keychain-db"
+          --build-number "${{ steps.build.outputs.number }}"
+          --output "$RUNNER_TEMP/release"
+          | tee "$RUNNER_TEMP/build-dmg.log"
+          && grep -E '^(version|dmg)=' "$RUNNER_TEMP/build-dmg.log" >> "$GITHUB_OUTPUT"
+
+      - name: Remove the signing keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/photon-signing.keychain-db" 2>/dev/null || true
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.dmg.outputs.version }}
+          DMG: ${{ steps.dmg.outputs.dmg }}
+          IDENTITY: ${{ steps.signing.outputs.identity }}
+        run: |
+          TAG="v$VERSION"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::notice::$TAG is already released, so nothing was published."
+            exit 0
+          fi
+          NOTES="$RUNNER_TEMP/notes.md"
+          {
+            echo "Built from ${COMMIT:0:7}, for macOS 26 or later, on Apple silicon and Intel Macs."
+            echo
+            echo "**Installing:** open the DMG and drag Photon to Applications. This build is self-signed, not notarized by Apple, so macOS blocks its first launch. Try opening Photon, then go to **System Settings → Privacy & Security** and click **Open Anyway**."
+            echo
+            echo "Signed with the certificate whose SHA-1 fingerprint is \`$IDENTITY\`. The DMG's SHA-256 is in the \`.sha256\` file."
+            echo
+            gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+              -f tag_name="$TAG" -f target_commitish="$COMMIT" --jq .body
+          } > "$NOTES"
+          gh release create "$TAG" "$DMG" "$DMG.sha256" \
+            --target "$COMMIT" \
+            --title "Photon $VERSION" \
+            --notes-file "$NOTES"
