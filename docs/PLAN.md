@@ -935,7 +935,7 @@ Developer ID and notarization can be added later ($99/year). That also needs the
 
 Built without a Mac, in a Linux session, by the user's request. The scripts pass `shellcheck` and the workflow passes `actionlint`, and the certificate script's OpenSSL half ran on Linux: it makes a code-signing certificate and a `.p12` that reads back with the password.
 
-**Not verified yet:** everything that needs macOS. That's the Release build itself (including its Intel slice, which nothing has built before), `security import` of the `.p12`, signing, the requirement check, the DMG and publishing. The first run on main, after the secrets are added, is the test. Also not checked: whether a release build keeps a removable-volume grant across two releases, which needs the real drive, read-only, as in Spike 5.
+**On macOS:** `.github/workflows/release-check.yml` runs the import, build, signing, requirement check and DMG on every pull request that changes them, with a throwaway certificate, then mounts the DMG and verifies the app inside. Publishing only runs on main, so the first run there, after the secrets are added, is its test. Also not checked: whether a release build keeps a removable-volume grant across two releases, which needs the real drive, read-only, as in Spike 5.
 
 ## Future feature notes
 
