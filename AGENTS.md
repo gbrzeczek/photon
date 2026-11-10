@@ -48,6 +48,8 @@ Start measurements from a shell, not with `open`: an unsigned build started by L
 
 The tests create and mount exFAT disk images with `hdiutil`, which works without a real drive.
 
+Every push to main that passes CI is released as a signed DMG by `.github/workflows/release.yml`. The same build runs on a Mac with `scripts/release/build-dmg.sh`, given a certificate's SHA-1. Never commit the signing certificate, its `.p12` or its password, and never replace the certificate: users would lose their permissions. See [Distribution](docs/PLAN.md#distribution).
+
 ## Rules that must not be broken
 
 ### Disk access

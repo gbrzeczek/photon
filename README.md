@@ -2,7 +2,7 @@
 
 A fast, native macOS browser for photos and videos in your own folders and on removable drives.
 
-> **Status: early development.** Indexing works, but there's no app to download yet. This README describes what Photon is being built to do. Follow progress in the [implementation plan](docs/PLAN.md).
+> **Status: early development.** Early builds are on [GitHub Releases](https://github.com/gbrzeczek/photon/releases), made from every change to `main`. This README describes what Photon is being built to do. Follow progress in the [implementation plan](docs/PLAN.md).
 
 ## Why Photon
 
@@ -52,9 +52,9 @@ See [milestones](docs/PLAN.md#milestones) for the full list.
 
 ## Installation
 
-There's no release yet. The plan is to publish DMGs on GitHub Releases, for macOS 26 or later.
+Download the DMG from the [latest release](https://github.com/gbrzeczek/photon/releases/latest), for macOS 26 or later. A new one is built from every change to `main`, so expect early-development builds.
 
-These builds will be self-signed, not notarized by Apple, so macOS will block the first launch. To open one, try launching Photon, then go to **System Settings → Privacy & Security** and click **Open Anyway**.
+These builds are self-signed, not notarized by Apple, so macOS blocks the first launch. To open one, try launching Photon, then go to **System Settings → Privacy & Security** and click **Open Anyway**.
 
 ## Contributing
 
