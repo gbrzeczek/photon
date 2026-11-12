@@ -301,17 +301,21 @@ private struct FullScreenButton: View {
         }
         .help(isFullScreen ? "Exit full screen" : "Enter full screen")
         .background(WindowReader(window: $window))
-        .onChange(of: window) { _, window in isFullScreen = window?.styleMask.contains(.fullScreen) == true }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) {
-            if $0.object as? NSWindow === window { isFullScreen = true }
+        .onChange(of: window) { refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { _ in
+            refresh()
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) {
-            if $0.object as? NSWindow === window { isFullScreen = false }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { _ in
+            refresh()
         }
     }
+
+    /// Read from the window itself, rather than from which notification came, so it can't drift.
+    private func refresh() { isFullScreen = window?.styleMask.contains(.fullScreen) == true }
 }
 
-/// The window a view is in.
+/// The window a view is in. In full screen, the toolbar moves into a window of its own, which can't
+/// become main, so only a window that can is reported: that's the one full screen applies to.
 private struct WindowReader: NSViewRepresentable {
     @Binding var window: NSWindow?
 
@@ -331,7 +335,7 @@ private struct WindowReader: NSViewRepresentable {
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            let window = window
+            guard let window, window.canBecomeMain else { return }
             // Not during the view update that moved it.
             DispatchQueue.main.async { [found] in found(window) }
         }
