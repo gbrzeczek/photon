@@ -141,12 +141,31 @@ final class MpvFrameGrabber: @unchecked Sendable {
     /// whose video decoder is missing and raises no error, so an empty `video-codec` means failed.
     func open() -> Opened? {
         guard waiter.wait(timeout: Self.timeout, until: { waiter.loaded }) else { return nil }
-        guard let codec = core.string("video-codec"), !codec.isEmpty else { return nil }
+        guard let codec = core.string("video-codec"), !codec.isEmpty, let render else { return nil }
+        // The load shows its own first frame, paused. Waiting for it here keeps its restart and its
+        // frame from being taken for a later seek's.
+        let api = core.api
+        frameSeen = false
+        guard
+            waiter.wait(
+                timeout: Self.timeout,
+                poll: {
+                    if api.renderContextUpdate(render) & UInt64(MPV_RENDER_UPDATE_FRAME.rawValue) != 0 {
+                        frameSeen = true
+                    }
+                },
+                until: { waiter.restarts > 0 && frameSeen })
+        else { return nil }
         return Opened(duration: core.double("duration") ?? 0)
     }
 
     /// The frame at the keyframe nearest `seconds`, upright and at most `maxPixelSize` on its long edge.
     func frame(at seconds: Double, maxPixelSize: Int) -> CGImage? {
+        frameAndTime(at: seconds, maxPixelSize: maxPixelSize)?.image
+    }
+
+    /// The same, with the time of the frame it found.
+    func frameAndTime(at seconds: Double, maxPixelSize: Int) -> (image: CGImage, time: Double)? {
         guard let render, !waiter.isAborted else { return nil }
         let api = core.api
         let mark = waiter.restarts
@@ -160,8 +179,10 @@ final class MpvFrameGrabber: @unchecked Sendable {
                 }
             },
             until: { waiter.restarts > mark && frameSeen })
-        guard ready, let size = displaySize(maxPixelSize: maxPixelSize) else { return nil }
-        return draw(render, width: size.width, height: size.height)
+        guard ready, let size = displaySize(maxPixelSize: maxPixelSize),
+            let image = draw(render, width: size.width, height: size.height)
+        else { return nil }
+        return (image, core.double("time-pos") ?? seconds)
     }
 
     /// The picture's size as shown, after the pixel aspect and rotation, fitted to `maxPixelSize`.

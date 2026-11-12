@@ -22,7 +22,8 @@ let usage = """
     thumbnails makes every thumbnail for a folder that has been scanned, reading it the way scan does.
     seed writes a library with no real files, for measuring the grid. Its volume is always offline.
     scan refuses an external volume unless it's mounted read-only.
-    videos writes the format test set: one real, playable clip per format AVFoundation writes.
+    videos writes the format test set: one real, playable clip per format AVFoundation writes, and the
+    fallback's clips in MKV, WebM, AVI and the other formats only mpv plays.
     generate and videos only write to the internal disk or a disk image.
     """
 
@@ -142,7 +143,14 @@ func runVideos(path: String) async throws {
         let name = "\(format.codec.rawValue)-\(format.fileExtension).\(format.fileExtension)"
         try await SyntheticVideo.write(to: root.appending(path: name), format: format, options: options)
     }
-    print("\(SyntheticVideo.Format.avFoundationSet.count) videos")
+    // The fallback's clips, which only mpv plays, are committed rather than written, because nothing
+    // here can encode them.
+    for clip in FallbackClip.allCases {
+        let destination = root.appending(path: "fallback-\(clip.fileName)")
+        try? FileManager.default.removeItem(at: destination)
+        try FileManager.default.copyItem(at: clip.url, to: destination)
+    }
+    print("\(SyntheticVideo.Format.avFoundationSet.count + FallbackClip.allCases.count) videos")
 }
 
 func runThumbnails(path: String) async throws {

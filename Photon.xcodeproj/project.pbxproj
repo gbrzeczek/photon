@@ -87,6 +87,7 @@
 				A10000000000000000000008 /* Sources */,
 				A10000000000000000000007 /* Frameworks */,
 				A10000000000000000000009 /* Resources */,
+				A100000000000000000000F1 /* Embed libmpv */,
 			);
 			buildRules = (
 			);
@@ -173,6 +174,29 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		A100000000000000000000F1 /* Embed libmpv */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Embed libmpv";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "\"$SRCROOT/scripts/mpv/embed.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		A10000000000000000000008 /* Sources */ = {

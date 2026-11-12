@@ -89,12 +89,13 @@ final class MpvPlayback: VideoPlayback {
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.notify() } }
         }
         let provider = provider
-        let layer = videoLayer
+        let layer = DrawingLayer(videoLayer)
         let fileExtension = source.fileExtension
         queue.async { [weak self] in
-            let result = Result { try Self.open(provider: provider, layer: layer, fileExtension: fileExtension) }
+            let result = Result { try Self.open(provider: provider, fileExtension: fileExtension) }
+            let core = CoreResult(result: result)
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.opened(result) ?? Self.discard(result, layer: layer) }
+                MainActor.assumeIsolated { self?.opened(core.result) ?? Self.discard(core.result, layer: layer) }
             }
         }
     }
@@ -107,7 +108,7 @@ final class MpvPlayback: VideoPlayback {
 
     /// Runs on `queue`. The render context has to exist before the file loads, or mpv decodes no video.
     private nonisolated static func open(
-        provider: ScheduledByteProvider, layer: MpvVideoLayer, fileExtension: String
+        provider: ScheduledByteProvider, fileExtension: String
     ) throws -> MpvCore {
         guard let api = MpvLibrary.shared else { throw MpvError(description: "No libmpv in this build") }
         let core = try MpvCore(
@@ -133,13 +134,13 @@ final class MpvPlayback: VideoPlayback {
 
     private func opened(_ result: Result<MpvCore, any Error>) {
         guard case .success(let core) = result, !isClosed else {
-            if case .success(let core) = result { Self.destroy(core, layer: videoLayer, queue: queue) }
+            if case .success(let core) = result { Self.destroy(core, layer: DrawingLayer(videoLayer), queue: queue) }
             status = .unsupported
             notify()
             return
         }
         self.core = core
-        let layer = videoLayer
+        let layer = DrawingLayer(videoLayer)
         let fileExtension = source.fileExtension
         let state = (muted: isMuted, volume: volume, loops: loops, fills: fillsBounds)
         queue.async { [weak self] in
@@ -147,7 +148,7 @@ final class MpvPlayback: VideoPlayback {
                 try core.start { event in
                     DispatchQueue.main.async { MainActor.assumeIsolated { self?.handle(event) } }
                 }
-                try layer.attach(core: core)
+                try layer.layer.attach(core: core)
             } catch {
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
@@ -174,10 +175,10 @@ final class MpvPlayback: VideoPlayback {
         core.observe("time-pos", format: MPV_FORMAT_DOUBLE)
     }
 
-    private static func discard(_ result: Result<MpvCore, any Error>, layer: MpvVideoLayer) {
+    private static func discard(_ result: Result<MpvCore, any Error>, layer: DrawingLayer) {
         if case .success(let core) = result {
             DispatchQueue.global(qos: .utility).async {
-                layer.detach()
+                layer.layer.detach()
                 core.destroy()
             }
         }
@@ -355,16 +356,16 @@ final class MpvPlayback: VideoPlayback {
         previews.cancel()
         provider.cancel()
         videoLayer.onFirstFrame = nil
-        if let core { Self.destroy(core, layer: videoLayer, queue: queue) }
+        if let core { Self.destroy(core, layer: DrawingLayer(videoLayer), queue: queue) }
         core = nil
     }
 
     /// mpv's order: the render context first, with its GL context current, then the core. The layer
     /// keeps its GL context until it goes, because Core Animation may still display it.
-    private static func destroy(_ core: MpvCore, layer: MpvVideoLayer, queue: DispatchQueue) {
+    private static func destroy(_ core: MpvCore, layer: DrawingLayer, queue: DispatchQueue) {
         queue.async {
             core.set("pause", "yes")
-            layer.detach()
+            layer.layer.detach()
             core.destroy()
         }
     }
@@ -415,21 +416,23 @@ final class MpvFramePreviewer {
         let source = source
         let (seconds, size) = (next.seconds, next.size)
         worker.queue.async { [weak self] in
-            let image = Self.grab(worker: worker, source: source, seconds: seconds, size: size)
-            let box = UncheckedImage(image: image)
+            let found = Self.grab(worker: worker, source: source, seconds: seconds, size: size)
+            let box = UncheckedImage(image: found?.image, time: found?.time ?? seconds)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard let self, !self.cancelled else { return }
                     let completion = self.current
                     self.current = nil
-                    completion?(box.image, seconds)
+                    completion?(box.image, box.time)
                     self.startNext()
                 }
             }
         }
     }
 
-    private nonisolated static func grab(worker: Worker, source: VideoSource, seconds: Double, size: Int) -> CGImage? {
+    private nonisolated static func grab(
+        worker: Worker, source: VideoSource, seconds: Double, size: Int
+    ) -> (image: CGImage, time: Double)? {
         if worker.grabber == nil, !worker.failed, let api = MpvLibrary.shared {
             if let grabber = try? MpvFrameGrabber(
                 api: api, provider: worker.provider, fileExtension: source.fileExtension),
@@ -440,7 +443,7 @@ final class MpvFramePreviewer {
                 worker.failed = true
             }
         }
-        return worker.grabber?.frame(at: seconds, maxPixelSize: size)
+        return worker.grabber?.frameAndTime(at: seconds, maxPixelSize: size)
     }
 
     func cancel() {
@@ -458,4 +461,17 @@ final class MpvFramePreviewer {
 /// A decoded frame, handed from the frames queue to the main thread and never touched again there.
 private struct UncheckedImage: @unchecked Sendable {
     let image: CGImage?
+    let time: Double
+}
+
+/// The video layer, handed to mpv's queues. Core Animation layers aren't Sendable, but this one's mpv
+/// work is all on its own draw queue, behind its own lock, which is what makes passing it safe.
+struct DrawingLayer: @unchecked Sendable {
+    let layer: MpvVideoLayer
+    init(_ layer: MpvVideoLayer) { self.layer = layer }
+}
+
+/// A core made on the playback queue, on its way to the main thread. Only one side holds it at a time.
+private struct CoreResult: @unchecked Sendable {
+    let result: Result<MpvCore, any Error>
 }

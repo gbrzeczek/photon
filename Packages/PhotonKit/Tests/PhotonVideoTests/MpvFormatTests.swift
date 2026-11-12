@@ -131,6 +131,21 @@ struct MpvFormatTests {
         #expect(Self.brightness(image) > 0.15)
     }
 
+    @Test("A frame comes from where it was asked for, not from the frame the file opened on")
+    func frameTime() throws {
+        let api = try #require(MpvLibrary.shared)
+        for clip in [FallbackClip.h264MKV, .vp9WebM, .av1MKV, .theoraOGV] {
+            let provider = ByteSourceProvider(DataByteSource(try Data(contentsOf: clip.url)))
+            let grabber = try MpvFrameGrabber(api: api, provider: provider, fileExtension: clip.fileExtension)
+            defer { grabber.close() }
+            #expect(grabber.open() != nil, "\(clip)")
+            let first = try #require(grabber.frameAndTime(at: 0, maxPixelSize: 64), "\(clip)")
+            let later = try #require(grabber.frameAndTime(at: 1, maxPixelSize: 64), "\(clip)")
+            #expect(abs(later.time - 1) < 0.05, "\(clip): \(later.time)")
+            #expect(Self.pixels(first.image) != Self.pixels(later.image), "\(clip)")
+        }
+    }
+
     @Test("A read that fails for the drive's sake leaves the video pending, not failed")
     func driveFailure() async throws {
         let fixture = try FallbackFixture(clips: [.h264MKV])
@@ -298,6 +313,18 @@ struct MpvFormatTests {
             defer { api.terminateDestroy(handle) }
             #expect(api.setOptionString(handle, name, value) >= 0, "\(name)")
         }
+    }
+
+    private static func pixels(_ image: CGImage) -> [UInt8] {
+        var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
+        pixels.withUnsafeMutableBytes { buffer in
+            CGContext(
+                data: buffer.baseAddress, width: image.width, height: image.height, bitsPerComponent: 8,
+                bytesPerRow: image.width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)?
+                .draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        }
+        return pixels
     }
 
     /// Mean brightness from 0 to 1.

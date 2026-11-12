@@ -15,7 +15,7 @@ import Synchronization
 /// - The GL context lives exactly as long as the layer: Core Animation can still display it after mpv
 ///   is gone, so the context is released in `deinit`, after `detach` has freed the render context and
 ///   the playback has destroyed the core.
-final class MpvVideoLayer: CAOpenGLLayer, @unchecked Sendable {
+final class MpvVideoLayer: CAOpenGLLayer {
     private var pixelFormat: CGLPixelFormatObj?
     private var context: CGLContextObj?
     private let drawQueue = DispatchQueue(label: "app.photon.mpv.draw", qos: .userInteractive)
@@ -145,21 +145,24 @@ final class MpvVideoLayer: CAOpenGLLayer, @unchecked Sendable {
             return true
         }
         guard enqueue else { return }
-        drawQueue.async { [self] in
-            let (api, render) = lock.withLock { () -> (MpvLibrary?, OpaquePointer?) in
-                drawPending = false
-                return (self.api, self.render)
-            }
-            if let api, let render {
-                // mpv asks for this after every update callback, on the render thread.
-                // A frame flag only comes once there's video to draw. Before that, mpv draws only the
-                // transparent background.
-                let flags = api.renderContextUpdate(render)
-                if flags & UInt64(MPV_RENDER_UPDATE_FRAME.rawValue) != 0 { lock.withLock { drawsFrame = true } }
-            }
-            drawNow()
-            CATransaction.flush()
+        let box = DrawingLayer(self)
+        drawQueue.async { box.layer.drawPendingUpdate() }
+    }
+
+    /// Runs on the draw queue.
+    private func drawPendingUpdate() {
+        let (api, render) = lock.withLock { () -> (MpvLibrary?, OpaquePointer?) in
+            drawPending = false
+            return (self.api, self.render)
         }
+        if let api, let render {
+            // mpv asks for this after every update callback, on the render thread. A frame flag only
+            // comes once there's video to draw. Before that, mpv draws only the transparent background.
+            let flags = api.renderContextUpdate(render)
+            if flags & UInt64(MPV_RENDER_UPDATE_FRAME.rawValue) != 0 { lock.withLock { drawsFrame = true } }
+        }
+        drawNow()
+        CATransaction.flush()
     }
 
     private func drawNow() { super.display() }
