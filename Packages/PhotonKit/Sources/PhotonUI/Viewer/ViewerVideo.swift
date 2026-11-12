@@ -55,8 +55,9 @@ final class ViewerVideo {
 
     static let hideDelay: Duration = .seconds(2.5)
     private static let fastestRate: Float = 8
-    /// The speed menu's choices, and what `[` and `]` step through.
-    static let speeds: [Float] = [0.5, 0.75, 1, 1.25, 1.5, 2]
+    /// The speed slider's steps, and what `[` and `]` step through. 1× is in the middle, with as many
+    /// steps either side.
+    static let speeds: [Float] = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2]
 
     init(engines: VideoEngines, lookup: @escaping SourceLookup, in view: NSView, above picture: CALayer) {
         self.engines = engines

@@ -296,6 +296,9 @@ struct VideoViewerTests {
         browser.model.openViewer()
         #expect(try await until { browser.video.status == .ready })
         let video = browser.video
+        // 1× sits in the middle of the speed slider.
+        #expect(ViewerVideo.speeds.count % 2 == 1)
+        #expect(ViewerVideo.speeds[ViewerVideo.speeds.count / 2] == 1)
         browser.press("m", code: 46)
         video.pointerMoved()
         #expect(try await until { video.areControlsVisibleForTesting })
