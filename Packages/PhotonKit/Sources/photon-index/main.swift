@@ -77,7 +77,7 @@ func runScan(path: String) async throws {
     print("Volume: \(mount.filesystem), \(mount.location.rawValue), read-only: \(mount.isReadOnly)")
 
     let store = try openStore()
-    let indexer = LibraryIndexer(store: store, extractor: MediaMetadataReader())
+    let indexer = LibraryIndexer(store: store, extractor: StandardMetadataReader())
     // Run on the main run loop, which async main keeps running, so an unmount stops the work.
     let monitor = VolumeEventMonitor(
         center: NSWorkspace.shared.notificationCenter,
@@ -150,7 +150,7 @@ func runThumbnails(path: String) async throws {
     if let reason = MountPolicy.refusalReason(for: mount) { fail("Refused: \(reason)") }
     print("Volume: \(mount.filesystem), \(mount.location.rawValue), read-only: \(mount.isReadOnly)")
     let store = try openStore()
-    let indexer = LibraryIndexer(store: store, extractor: MediaMetadataReader())
+    let indexer = LibraryIndexer(store: store, extractor: StandardMetadataReader())
     let monitor = VolumeEventMonitor(
         center: NSWorkspace.shared.notificationCenter,
         willUnmount: { indexer.volumeWillUnmount(mountPoint: $0) },
@@ -158,7 +158,7 @@ func runThumbnails(path: String) async throws {
     let volume = try await indexer.connect(mount: mount)
     let packs = ThumbnailPackStore(store: store)
     let generator = ThumbnailGenerator(
-        store: store, packs: packs, scheduler: { indexer.scheduler(for: $0) }, video: AVFoundationThumbnailer())
+        store: store, packs: packs, scheduler: { indexer.scheduler(for: $0) }, video: StandardVideoThumbnailer())
 
     let run = Task { try await generator.runBackground(volume: volume) }
     signal(SIGINT, SIG_IGN)

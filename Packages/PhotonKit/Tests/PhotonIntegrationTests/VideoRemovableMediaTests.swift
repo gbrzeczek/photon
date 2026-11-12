@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import PhotonCore
 import PhotonIndex
@@ -45,6 +46,20 @@ struct VideoRemovableMediaTests {
                     try FileManager.default.copyItem(
                         at: staging.appending(path: name), to: URL(fileURLWithPath: mount).appending(path: name))
                 }
+                try image.detach()
+                return (image, try image.attach(readOnly: true))
+            } catch {
+                image.ensureDetached()
+                throw error
+            }
+        }
+
+        /// An image holding the fallback's clips, attached read-only.
+        func image(clips: [FallbackClip]) throws -> (DiskImage, String) {
+            let image = try DiskImage.create(in: directory, label: "PHOTONMPV", megabytes: 64)
+            do {
+                let mount = try image.attach()
+                for clip in clips { try clip.copy(to: URL(fileURLWithPath: mount)) }
                 try image.detach()
                 return (image, try image.attach(readOnly: true))
             } catch {
@@ -128,5 +143,83 @@ struct VideoRemovableMediaTests {
         #expect(await until { again.status == .ready })
         again.seek(to: 2, exact: true)
         #expect(await until { abs(again.currentTime - 2) < 0.05 })
+    }
+
+    // MARK: The libmpv fallback
+
+    @Test(
+        "The fallback's formats get metadata and thumbnails from a read-only exFAT image, which stays unchanged",
+        .enabled(if: MpvEngine.isAvailable, "No libmpv. Run scripts/mpv/build.sh"))
+    func fallbackThumbnails() async throws {
+        let fixture = try Fixture()
+        let clips = FallbackClip.allCases
+        let (image, mount) = try fixture.image(clips: clips)
+        defer { image.ensureDetached() }
+        let before = try Data(contentsOf: image.url)
+        let indexer = LibraryIndexer(store: fixture.store, extractor: StandardMetadataReader())
+        let volume = try #require(try await indexer.index(path: mount).volumeID)
+        let generator = ThumbnailGenerator(
+            store: fixture.store, packs: ThumbnailPackStore(store: fixture.store),
+            scheduler: { indexer.scheduler(for: $0) }, video: StandardVideoThumbnailer())
+        let report = try await generator.runBackground(volume: volume)
+        #expect(report.full == clips.count)
+        #expect(report.failed == 1, "Only the clip with no picture")
+        #expect(indexer.scheduler(for: volume)?.statistics.openHandles == 0)
+        let instance = try await fixture.instance(volume, named: FallbackClip.h264MKV.fileName)
+        let asset = try #require(try await fixture.store.asset(instance.assetID))
+        #expect(asset.metadata.pixelWidth == 320)
+        #expect(asset.metadata.durationSeconds.map { abs($0 - 2) < 0.1 } == true)
+        indexer.volumeWillUnmount(mountPoint: mount)
+        try image.detach()
+        #expect(try Data(contentsOf: image.url) == before)
+    }
+
+    @Test(
+        "A forced detach during mpv's playback closes every handle, and the video plays again after a reattach",
+        .enabled(if: MpvEngine.isAvailable, "No libmpv. Run scripts/mpv/build.sh"))
+    @MainActor
+    func fallbackDetachDuringPlayback() async throws {
+        let fixture = try Fixture()
+        let (image, mount) = try fixture.image(clips: [.h264MKV, .mpeg4AVI])
+        defer { image.ensureDetached() }
+        let indexer = LibraryIndexer(store: fixture.store, extractor: StandardMetadataReader())
+        let volume = try #require(try await indexer.index(path: mount).volumeID)
+        let instance = try await fixture.instance(volume, named: FallbackClip.h264MKV.fileName)
+        let scheduler = try #require(indexer.scheduler(for: volume))
+
+        let playback = MpvEngine().makePlayback(for: VideoSource(instance, scheduler: scheduler))
+        defer { playback.close() }
+        #expect(await until { playback.status == .ready })
+        playback.isMuted = true
+        playback.play(rate: 1)
+        // A scrub preview holds a second core reading the same file.
+        var preview: CGImage?
+        playback.previewFrame(at: 1, maxPixelSize: 160) { image, _ in preview = image }
+        #expect(await until { preview != nil })
+
+        // `willUnmount` suspends the scheduler, which fails mpv's reads under way, and nothing holds a
+        // handle between reads.
+        indexer.volumeWillUnmount(mountPoint: mount)
+        #expect(await until { scheduler.statistics.openHandles == 0 })
+        try image.detach(force: true)
+        indexer.volumeDidUnmount(mountPoint: mount)
+
+        let other = try await fixture.instance(volume, named: FallbackClip.mpeg4AVI.fileName)
+        let stale = MpvEngine().makePlayback(for: VideoSource(other, scheduler: scheduler))
+        defer { stale.close() }
+        #expect(await until { stale.status != .loading })
+        #expect(stale.status == .unavailable)
+
+        _ = try image.attach(readOnly: true)
+        _ = try await indexer.connectKnownVolumes()
+        let fresh = try #require(indexer.scheduler(for: volume))
+        let again = MpvEngine().makePlayback(for: VideoSource(instance, scheduler: fresh))
+        defer { again.close() }
+        #expect(await until { again.status == .ready })
+        again.seek(to: 1.5, exact: true)
+        #expect(await until { abs(again.currentTime - 1.5) < 0.05 })
+        again.close()
+        playback.close()
+        #expect(await until { fresh.statistics.openHandles == 0 })
     }
 }

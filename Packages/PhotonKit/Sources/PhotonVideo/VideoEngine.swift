@@ -64,8 +64,16 @@ public enum VideoPoster {
 
 /// Something that plays videos. AVFoundation comes first, and a fallback takes what it can't open.
 public protocol VideoEngine: Sendable {
+    /// Whether this engine is the one for the format, answered without reading anything.
     func canPlay(fileExtension: String) -> Bool
+    /// Whether it's worth trying after the engine for the format said `unsupported`, as mpv is for a MOV
+    /// holding a codec AVFoundation doesn't decode.
+    func canTryAfterOthers(fileExtension: String) -> Bool
     @MainActor func makePlayback(for source: VideoSource) -> any VideoPlayback
+}
+
+extension VideoEngine {
+    public func canTryAfterOthers(fileExtension: String) -> Bool { false }
 }
 
 /// The engines in order of preference.
@@ -74,11 +82,18 @@ public struct VideoEngines: Sendable {
 
     public init(_ engines: [any VideoEngine]) { self.engines = engines }
 
-    /// What this build plays.
-    public static var standard: VideoEngines { VideoEngines([AVFoundationEngine()]) }
+    /// What this build plays: AVFoundation, then Photon's libmpv when the build carries it.
+    public static var standard: VideoEngines { VideoEngines([AVFoundationEngine(), MpvEngine()]) }
 
     public func engine(for fileExtension: String) -> (any VideoEngine)? {
         let lowered = fileExtension.lowercased()
         return engines.first { $0.canPlay(fileExtension: lowered) }
+    }
+
+    /// The engine for the format, then any others worth trying if it says `unsupported`, in order.
+    public func candidates(for fileExtension: String) -> [any VideoEngine] {
+        let lowered = fileExtension.lowercased()
+        guard let index = engines.firstIndex(where: { $0.canPlay(fileExtension: lowered) }) else { return [] }
+        return [engines[index]] + engines[(index + 1)...].filter { $0.canTryAfterOthers(fileExtension: lowered) }
     }
 }

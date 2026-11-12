@@ -3,7 +3,7 @@ internal import GRDB
 /// Schema migrations. Migrations that have shipped are immutable, because user libraries must survive
 /// upgrades: to change the schema, add a new one. `SchemaSnapshotTests` fails if an old one is edited.
 enum LibraryMigrations {
-    static let current = "v5"
+    static let current = "v6"
 
     static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
@@ -12,6 +12,7 @@ enum LibraryMigrations {
         migrator.registerMigration("v3") { db in try db.execute(sql: v3) }
         migrator.registerMigration("v4") { db in try db.execute(sql: v4) }
         migrator.registerMigration("v5") { db in try db.execute(sql: v5) }
+        migrator.registerMigration("v6") { db in try db.execute(sql: v6) }
         return migrator
     }
 
@@ -221,5 +222,22 @@ enum LibraryMigrations {
             relative_path TEXT NOT NULL,
             PRIMARY KEY (volume_id, relative_path)
         ) WITHOUT ROWID;
+        """
+
+    /// The libmpv fallback arrived, so videos that no engine could decode get another try. Changes data
+    /// only, not the schema.
+    ///
+    /// - Thumbnails: a format with no engine was marked failed without a read, and so was a file
+    ///   AVFoundation opened but couldn't decode, which mpv may. Every failed video goes back to waiting.
+    ///   One that still fails is marked again after one more read.
+    /// - Metadata: MKV, AVI and the other containers had none, because nothing read them. Their files go
+    ///   back to pending, and indexing reads them again. The content is the same, so each keeps its asset
+    ///   and gains what was missing.
+    private static let v6 = """
+        UPDATE assets SET thumbnail_state = 0 WHERE kind = 2 AND thumbnail_state = 3;
+        UPDATE file_instances SET index_state = 0, index_attempts = 0, index_error = NULL
+        WHERE index_state != 0 AND asset_id IN (
+            SELECT id FROM assets WHERE kind = 2 AND width IS NULL AND duration_seconds IS NULL
+        );
         """
 }

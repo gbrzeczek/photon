@@ -31,6 +31,9 @@ final class ViewerVideo {
     private var frame: CGRect = .zero
     private var autoplays = false
     private var startsAt: Double?
+    /// The file playing, and the engines left to try if this one says it can't decode it.
+    private var source: VideoSource?
+    private var fallbacks: [any VideoEngine] = []
     /// Where it was, so that a video whose drive came back carries on from there.
     private var lastTime: Double = 0
     private var wasPlayingBeforeScrub = false
@@ -135,11 +138,14 @@ final class ViewerVideo {
                 self.onChange?()
                 return
             }
-            guard let engine = self.engines.engine(for: source.fileExtension) else {
+            let candidates = self.engines.candidates(for: source.fileExtension)
+            guard let engine = candidates.first else {
                 self.problem = "Can't play this format"
                 self.onChange?()
                 return
             }
+            self.source = source
+            self.fallbacks = Array(candidates.dropFirst())
             self.attach(engine.makePlayback(for: source))
         }
     }
@@ -169,6 +175,8 @@ final class ViewerVideo {
         }
         playback = nil
         asset = nil
+        source = nil
+        fallbacks = []
         problem = nil
         startsAt = nil
         autoplays = false
@@ -197,6 +205,15 @@ final class ViewerVideo {
         case .unavailable:
             problem = nil
         case .unsupported:
+            if let source, !fallbacks.isEmpty {
+                // AVFoundation opened the file and can't decode what's inside. mpv may.
+                let next = fallbacks.removeFirst()
+                playback.onChange = nil
+                playback.close()
+                playback.layer.removeFromSuperlayer()
+                attach(next.makePlayback(for: source))
+                return
+            }
             problem = "Can't play this video"
         }
         let showsLayer = playback.status == .ready && playback.isShowingFrame

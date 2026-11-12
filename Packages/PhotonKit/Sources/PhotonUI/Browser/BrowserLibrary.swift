@@ -75,12 +75,12 @@ public final class BrowserLibrary {
         let store = handle.store
         self.store = store
         ejector = VolumeEjector(scope: ejectScope)
-        let indexer = LibraryIndexer(store: store, extractor: MediaMetadataReader(), options: options)
+        let indexer = LibraryIndexer(store: store, extractor: StandardMetadataReader(), options: options)
         self.indexer = indexer
         let packs = ThumbnailPackStore(store: store)
         self.packs = packs
         let generator = ThumbnailGenerator(
-            store: store, packs: packs, scheduler: { indexer.scheduler(for: $0) }, video: AVFoundationThumbnailer())
+            store: store, packs: packs, scheduler: { indexer.scheduler(for: $0) }, video: StandardVideoThumbnailer())
         self.generator = generator
         let loader = ThumbnailLoader(store: store, packs: packs, generator: generator, cache: ThumbnailMemoryCache())
         self.loader = loader
