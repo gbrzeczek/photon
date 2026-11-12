@@ -33,8 +33,8 @@ final class ScrollJumpOverlay: NSView {
         jumpGlass.cornerRadius = Self.jumpSize.width / 2
         let jumpContent = NSView()
         jumpGlass.contentView = jumpContent
-        configure(topButton, symbol: "chevron.up.to.line", label: "Scroll to Top", action: #selector(jumpTop))
-        configure(bottomButton, symbol: "chevron.down.to.line", label: "Scroll to Bottom", action: #selector(jumpBottom))
+        configure(topButton, symbol: "arrow.up.to.line", label: "Scroll to Top", action: #selector(jumpTop))
+        configure(bottomButton, symbol: "arrow.down.to.line", label: "Scroll to Bottom", action: #selector(jumpBottom))
         let stack = NSStackView(views: [topButton, bottomButton])
         stack.orientation = .vertical
         stack.spacing = 4
