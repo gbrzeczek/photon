@@ -367,6 +367,8 @@ Keyboard navigation is built alongside the grid, list and viewer, not added duri
 | Video | M | Mute |
 | Video | `[`, `]`, `=` | Slower, faster, normal speed |
 
+The Video menu offers play and pause, the skips, mute and the speeds with these keys written in their titles, because as menu shortcuts they'd be taken from the search field.
+
 Space closes a photo in the viewer, so it works as a quick look toggle. For videos it plays and pauses, and Escape closes. J and L each double the speed in their direction up to 8×, as in editing apps, and J only plays backward where AVFoundation can. A click on a video plays or pauses it, and a double click enters or leaves full screen, as in QuickTime Player. Letters are matched by character, like Period.
 
 The viewer also takes a pinch, a mouse wheel or a scroll with Command or Option held to zoom, the toolbar's zoom buttons, a double click or two-finger double tap to toggle actual size, dragging or a trackpad scroll to pan when zoomed in, and a two-finger swipe to the next photo at fit. Double-clicking a tile or row opens it. In the grid, a scroll with Command or Option held changes the tile size. These need the mouse or trackpad, and everything they do has a key.
@@ -533,7 +535,7 @@ What stands in for a pull:
 | # | Spike | State |
 |---|---|---|
 | 1 | Grid zoom and navigation | Decided: `CALayer` grid. Real trackpad and VoiceOver checks remain |
-| 2 | libmpv embedding | Decided: render API in a `CAOpenGLLayer`. On-screen pacing and our own build remain |
+| 2 | libmpv embedding | Decided: render API in a `CAOpenGLLayer`, built in Milestone 6 from our own build. On-screen pacing remains |
 | 3 | Volume identity | Done on the T7 Touch and disk images. A physical pull was dropped by the user's decision |
 | 4 | External drive throughput | Done on the T7 Touch, except video thumbnails |
 | 5 | Signing | Done: the grant persisted across rebuilds on the T7 Touch |
@@ -650,26 +652,32 @@ The tool was first validated on an exFAT disk image, and those numbers are in `S
 
 ### Milestone 6 results
 
-The AVFoundation half is built: video thumbnails, playback in the viewer, its controls, scrub previews and the video keys, all reading through the volume's I/O scheduler. `VideoEngine` hides it, so the fallback can join without the viewer changing. The libmpv fallback isn't started, because it needs our own LGPL build of mpv and FFmpeg first.
+Both halves are built: AVFoundation, and the libmpv fallback from Photon's own LGPL build, as described in [Video](#video). Each gives thumbnails, playback in the viewer with its controls, scrub previews, hover previews and the video keys, all reading through the volume's I/O scheduler. The fallback also gives metadata for its containers. `VideoEngine` hides both, so the viewer didn't change, apart from moving to the next engine when one says `unsupported`. A Video menu has play and pause, the skips, mute and speed.
 
-**Done when a format test set plays and shows thumbnails**, for AVFoundation's half. All 7 formats in the set got thumbnails through the scheduler, then played, seeked to an exact frame and gave a scrub preview, in `VideoFormatTests`. A clip written held upright has an upright thumbnail. The fallback's formats, MKV, WebM, AVI, WMV and the rest, show the film symbol and say "Can't play this format".
+**Done when a format test set plays and shows thumbnails.** AVFoundation's 7 formats did, in `VideoFormatTests`, as before. The fallback's 14 clips with a picture all got metadata and thumbnails through the scheduler, and all 14 played, paused, seeked to an exact frame, drew a frame into the layer and gave a scrub preview, in `MpvFormatTests`. That covers H.264 in MKV and MPEG-TS, VP9 in WebM and MP4, VP8, AV1 through dav1d, MPEG-4 Part 2 and DivX 3 in AVI, WMV 8, Sorenson Spark in FLV, MPEG-2 in a program stream, Theora, NTSC DV at 4:3 and DNxHR in MXF. The clip with sound and no picture failed calmly, and the viewer says "Can't play this video" for it. The VP9 MP4 went from AVFoundation to mpv, for its thumbnail and in the viewer.
+
+**Migration v6** clears the failed thumbnail state of every video, and puts videos with no dimensions and no duration back to pending for indexing, so the fallback's containers gain their metadata and keep their assets. It changes data only, so its schema snapshot is v5's. The user's library, at v5, migrates on the next launch.
 
 **Removable media**, on exFAT disk images, by the user's decision in [Removable media checks](#removable-media-checks):
 
 | Check | Result |
 |---|---|
 | Thumbnails from a read-only image | H.264, HEVC and ProRes all made, and the image is byte for byte unchanged |
+| The fallback's metadata and thumbnails from a read-only image | All 15 clips: 14 thumbnails, the audio-only clip failed, MKV's dimensions and duration read, no handle left open, and the image byte for byte unchanged |
+| `willUnmount` and a forced detach during mpv's playback, with a scrub preview's second core open | No handle stays open, a new playback says `unavailable`, and after a reattach the video plays and seeks to an exact frame |
 | `willUnmount` during playback | No handle stays open |
 | Forced detach during playback | A new read says `unavailable`, not `unsupported`, and the app keeps running |
 | Reattach | The same video plays again and seeks to an exact frame |
 | Reads failing with `EIO` on a healthy mount | The thumbnail stays pending, not failed, and no handle is left open |
 | A file changed since indexing | It isn't read as the old one |
 
-**Tests:** 459 Swift Testing tests pass, up from 442. 8 are the format test set, 2 are video on disk images, and 7 drive the browser through real events in a window that isn't shown: video tiles get frames, Space plays and pauses, J, K, L, M and the modified arrows work, a held arrow key opens no player, a format with no engine says so, and hover previews start on resting, survive a reload, and stop for a move, a key, a scroll and the viewer.
+**Tests, with the fallback:** 491 Swift Testing tests pass, and the same 491 pass with libmpv taken away, 19 of them skipped. New are 14 in `MpvFormatTests`, one of them run for each of the 14 clips with a picture, 2 on disk images, 2 for migration v6, and 2 through real key events in the browser: an MKV plays, mutes, pauses and skips in the viewer with the Video menu following it, and the VP9 MP4 moves to mpv. With no libmpv, as in a checkout that hasn't built it, the fallback's tests are skipped and the rest pass. The fallback's tests also cover a read failing with `EIO`, a file changed since indexing, a thumbnail cancelled while its read stalls, closing a playback, a drive failing on open, playing to the end and starting again, and mpv's isolation options. CI builds libmpv on its first run after `scripts/mpv/build.sh` changes, so this PR's first run takes a while.
+
+**Tests, at the AVFoundation half:** 459 Swift Testing tests pass, up from 442. 8 are the format test set, 2 are video on disk images, and 7 drive the browser through real events in a window that isn't shown: video tiles get frames, Space plays and pauses, J, K, L, M and the modified arrows work, a held arrow key opens no player, a format with no engine says so, and hover previews start on resting, survive a reload, and stop for a move, a key, a scroll and the viewer.
 
 **Real GoPro files**, two clips copied from the T7's `GoPro` folder to the internal disk, because the drive was mounted writable at the time and `photon-index scan` refuses that: 4K HEVC at 25 fps, with AAC sound and GoPro's timecode and telemetry tracks. Both got thumbnails in 0.14 seconds together, played in the viewer, stopped on their last frame at the end, and played as hover previews in their tiles, checked by pixel differences between window snapshots. `PHOTON_HOVER_ROW` rests the pointer on a tile, for looking at a preview without driving the app.
 
-**Light and dark**, by window snapshot from the running app, on a library of the format test set at 1280×720 with synthetic photos: the grid with video frames and duration badges, the film symbol for videos with no frames, and the viewer playing HEVC with the transport bar. Both read clearly.
+**Light and dark**, by window snapshot from the running app, on a library of the format test set at 1280×720 with synthetic photos: the grid with video frames and duration badges, the film symbol for videos with no frames, and the viewer playing HEVC with the transport bar. Both read clearly. For the fallback, the screen was locked for the whole session, so the grid was rendered offscreen in both appearances, through `PHOTON_RENDER_LIBRARY`, on a library of both sets from `photon-index videos`: every fallback clip shows its own frame with its duration badge, and the audio-only clip keeps the film symbol. That render also found that posters were the first frame, which is fixed.
 
 **Performance:** one pass with `PHOTON_PERF_OUT` on the seeded 100k library, on the Retina display, release build, then a repeat for launch. The grid scenarios ran at 119.6–120 fps with no more than 2 missed frames, a worst main-thread frame of 4.1 ms, and 401–608 MB. Opening a folder took 72–73 ms. Launch took 410–441 ms to the result and 482–522 ms to the frame after it, over the 350 ms target, so `main` was built and measured alongside it on the same machine: 407–409 ms and 480–490 ms. Linking AVFoundation costs nothing measurable, and both are slower than at Milestone 5 on the same seeded library, for a reason this pass didn't look into. The first launch of each new binary took about 1 second, on both. Only the grid scenarios ran, as in Milestone 5's pass, so the list and viewer scenarios still need a run.
 
@@ -685,11 +693,24 @@ What building it found, and fixed:
 - Sound, and AVFoundation's reads during long playback from a real drive.
 - VoiceOver on the controls.
 
+**Performance, for the fallback:** not measured. A release build with `PHOTON_PERF_OUT` on the seeded 100k library wrote no timings in 10 minutes, with the session's screen locked, as Milestone 5's pass also stalled. The grid and list code didn't change. Launch gains one detached task that loads libmpv off the main thread, and the viewer gains a menu state set only when play, mute or speed change. This pass is owed on an unlocked screen.
+
+**Not verified, for the fallback:**
+
+- Anything on a real screen. The screen was locked for the whole session, so the viewer playing an MKV, its transport bar, a hover preview of a fallback format, the Video menu and both appearances of the viewer weren't seen. The layer is tested to receive a drawn frame in a window that isn't shown, and the pixels of frames are checked through the software renderer, not through the OpenGL layer.
+- Sound from mpv's AVFoundation audio output. Every test mutes.
+- On-screen frame pacing, resizing the viewer during playback, full screen, and HDR in the fallback. Spike 2 measured pacing from mpv's own counters only.
+- Real files in the fallback's formats: none were on hand, and the real drive holds MP4 and MOV. Long files, large MKVs with many tracks, subtitles and chapters, and Matroska's cover art.
+- The x86_64 slices, which were cross-built on Apple silicon and never run.
+- CI's first libmpv build on a hosted runner, its time, and the release workflow carrying it. Both run on this PR or after the merge.
+- The release DMG signing the 13 dylibs with the real certificate. `build-dmg.sh` signs nested code inside out, as before, and now checks every dylib has both architectures.
+- Hardened runtime and library validation, which stay off.
+
 **Not built:**
 
-- The libmpv fallback, its thumbnails through FFmpeg, and metadata for its containers. When it arrives, a migration must clear the failed state of videos it can decode.
 - A Live Photo's motion. How it should work is in [Live Photo motion](#live-photo-motion).
-- Play and pause in the menu bar. Space can't be a menu shortcut, because the menu would take it from the search field.
+- Keys shown in the Video menu are written in the titles, not as shortcuts. Space, M, the brackets and Shift-arrows can't be menu shortcuts, because the menu would take them from the search field.
+- Playing backward in the fallback. mpv can, by decoding backward, which is slow and memory hungry, so J only shuttles backward where AVFoundation plays.
 
 ### Milestone 5 results
 
