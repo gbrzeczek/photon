@@ -78,6 +78,8 @@ final class ScrollJumpOverlay: NSView {
     private func configure(_ button: NSButton, symbol: String, label: String, action: Selector) {
         button.isBordered = false
         button.bezelStyle = .regularSquare
+        button.title = ""
+        button.imagePosition = .imageOnly
         button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
         button.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
         button.contentTintColor = .labelColor

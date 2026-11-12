@@ -122,6 +122,8 @@ final class VideoControlsView: NSView {
     static func configure(_ button: NSButton, symbol: String, label: String, target: AnyObject) {
         button.isBordered = false
         button.bezelStyle = .regularSquare
+        button.title = ""
+        button.imagePosition = .imageOnly
         button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
         button.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 15, weight: .medium)
         button.contentTintColor = .labelColor
