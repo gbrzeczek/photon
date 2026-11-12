@@ -71,9 +71,62 @@ struct MigrationTests {
     }
 
     @Test("The v5 schema matches its snapshot")
-    func schemaSnapshotV5() async throws {
+    func schemaSnapshotV5() throws {
+        let queue = try DatabaseQueue()
+        try LibraryMigrations.migrator.migrate(queue, upTo: "v5")
+        let schema = try queue.read { try String.fetchAll($0, sql: Self.schemaSQL).joined(separator: ";\n\n") + ";\n" }
+        #expect(schema == (try snapshot("schema-v5")), "Add a migration instead of editing v5.")
+    }
+
+    @Test("The v6 schema matches its snapshot, which is v5's, because v6 changes only data")
+    func schemaSnapshotV6() async throws {
         let store = try LibraryStore(url: temporaryURL())
-        #expect(try await schema(store) == (try snapshot("schema-v5")), "Add a migration instead of editing v5.")
+        #expect(try await schema(store) == (try snapshot("schema-v6")), "Add a migration instead of editing v6.")
+        #expect(try snapshot("schema-v6") == (try snapshot("schema-v5")))
+    }
+
+    @Test("A v5 library upgrades in place, and videos no engine could read get another try")
+    func upgradeFromV5() async throws {
+        let url = temporaryURL()
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        do {
+            let queue = try DatabaseQueue(path: url.path)
+            try LibraryMigrations.migrator.migrate(queue, upTo: "v5")
+            try await queue.write { db in
+                // 1: an MKV with no metadata and a failed thumbnail. 2: an MP4 that read fine, whose
+                // thumbnail failed. 3: an MP4 with everything. 4: a photo that failed.
+                try db.execute(
+                    sql: """
+                        INSERT INTO volumes (id, uuid, name, first_seen_at, last_seen_at) VALUES (1, 'U', 'Drive', 0, 0);
+                        INSERT INTO assets (id, kind, width, height, duration_seconds, thumbnail_state, created_at) VALUES
+                            (1, 2, NULL, NULL, NULL, 3, 0),
+                            (2, 2, 1920, 1080, 12.5, 3, 0),
+                            (3, 2, 1920, 1080, 12.5, 2, 0),
+                            (4, 1, 4000, 3000, NULL, 3, 0);
+                        INSERT INTO file_instances (id, asset_id, volume_id, directory, name, size, modified_ns, index_state)
+                        VALUES
+                            (1, 1, 1, 'Videos', 'trip.mkv', 100, 1, 1),
+                            (2, 2, 1, 'Videos', 'odd.mp4', 100, 1, 1),
+                            (3, 3, 1, 'Videos', 'fine.mp4', 100, 1, 1),
+                            (4, 4, 1, 'Photos', 'bad.jpg', 100, 1, 2);
+                        """)
+            }
+        }
+        let store = try LibraryStore(url: url)
+        let (thumbnails, indexing) = try await store.pool.read { db in
+            (
+                try [Int: Int](
+                    uniqueKeysWithValues: Row.fetchAll(db, sql: "SELECT id, thumbnail_state FROM assets").map {
+                        ($0["id"], $0["thumbnail_state"])
+                    }),
+                try [Int: Int](
+                    uniqueKeysWithValues: Row.fetchAll(db, sql: "SELECT id, index_state FROM file_instances").map {
+                        ($0["id"], $0["index_state"])
+                    })
+            )
+        }
+        #expect(thumbnails == [1: 0, 2: 0, 3: 2, 4: 3])
+        #expect(indexing == [1: 0, 2: 1, 3: 1, 4: 2])
     }
 
     @Test("A v4 library upgrades in place, with every folder closed, and the tree's folders save")

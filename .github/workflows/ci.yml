@@ -16,7 +16,8 @@ jobs:
   build-and-test:
     # The hosted image for the deployment target. Its default Xcode provides the macOS 26 SDK.
     runs-on: macos-26
-    timeout-minutes: 30
+    # The first run after scripts/mpv/build.sh changes builds libmpv, and later runs take it from the cache.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
 
@@ -25,6 +26,9 @@ jobs:
           sw_vers
           xcodebuild -version
           swift --version
+
+      - name: Get libmpv
+        uses: ./.github/actions/libmpv
 
       - name: Test PhotonKit
         run: swift test --package-path Packages/PhotonKit

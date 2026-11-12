@@ -11,3 +11,6 @@ xcuserdata/
 *.p12
 *.p12.base64
 *.keychain-db
+
+# Our own libmpv and FFmpeg, built by scripts/mpv/build.sh
+Vendor/mpv/

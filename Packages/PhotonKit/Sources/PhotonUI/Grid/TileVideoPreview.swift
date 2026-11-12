@@ -19,6 +19,8 @@ final class TileVideoPreview {
     private(set) var playback: (any VideoPlayback)?
     private var startTask: Task<Void, Never>?
     private var hasStarted = false
+    private var source: VideoSource?
+    private var fallbacks: [any VideoEngine] = []
 
     /// How long the pointer must rest before anything is read.
     var delay: Duration = .milliseconds(600)
@@ -52,10 +54,12 @@ final class TileVideoPreview {
             try? await Task.sleep(for: delay)
             guard !Task.isCancelled else { return }
             let source = await lookup(instance)
-            guard !Task.isCancelled, let self, self.asset == asset, let source,
-                let engine = self.engines.engine(for: source.fileExtension)
-            else { return }
+            guard !Task.isCancelled, let self, self.asset == asset, let source else { return }
+            let candidates = self.engines.candidates(for: source.fileExtension)
+            guard let engine = candidates.first else { return }
             self.startTask = nil
+            self.source = source
+            self.fallbacks = Array(candidates.dropFirst())
             self.attach(engine.makePlayback(for: source))
         }
     }
@@ -87,7 +91,22 @@ final class TileVideoPreview {
         switch playback.status {
         case .loading:
             return
-        case .unavailable, .unsupported:
+        case .unsupported:
+            if let source, !fallbacks.isEmpty {
+                let next = fallbacks.removeFirst()
+                playback.onChange = nil
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                playback.layer.isHidden = true
+                playback.layer.removeFromSuperlayer()
+                CATransaction.commit()
+                playback.close()
+                self.playback = nil
+                attach(next.makePlayback(for: source))
+                return
+            }
+            stop()
+        case .unavailable:
             stop()
         case .ready:
             if !hasStarted {
@@ -163,6 +182,8 @@ final class TileVideoPreview {
         playback = nil
         asset = nil
         tile = nil
+        source = nil
+        fallbacks = []
         hasStarted = false
         landedAt = nil
     }
