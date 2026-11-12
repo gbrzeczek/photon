@@ -124,6 +124,10 @@ enum ViewerKeys {
         case "k": video.pause()
         case "l": video.shuttle(forward: true)
         case "m": video.toggleMute()
+        // Speed, as in VLC.
+        case "[": video.stepSpeed(faster: false)
+        case "]": video.stepSpeed(faster: true)
+        case "=": video.setSpeed(1)
         default: return false
         }
         return true

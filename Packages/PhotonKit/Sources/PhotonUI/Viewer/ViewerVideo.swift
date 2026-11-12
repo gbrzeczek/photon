@@ -29,8 +29,13 @@ final class ViewerVideo {
     /// Where it was, so that a video whose drive came back carries on from there.
     private var lastTime: Double = 0
     private var wasPlayingBeforeScrub = false
-    /// Mute carries from one video to the next, as it does in QuickTime Player.
+    /// What a click changed, so that the second click of a double click can put it back.
+    private var clickUndo: (time: Double, wasPlaying: Bool)?
+    /// Mute, volume and speed carry from one video to the next, as mute does in QuickTime Player.
     private(set) var isMuted = false
+    private(set) var volume: Float = 1
+    /// What Space and the play button play at. J and L shuttle apart from it.
+    private(set) var speed: Float = 1
     /// Why nothing is playing, for the status bar.
     private(set) var problem: String?
     private var controlsVisible = false
@@ -39,6 +44,8 @@ final class ViewerVideo {
 
     static let hideDelay: Duration = .seconds(2.5)
     private static let fastestRate: Float = 8
+    /// The speed menu's choices, and what `[` and `]` step through.
+    static let speeds: [Float] = [0.5, 0.75, 1, 1.25, 1.5, 2]
 
     init(engines: VideoEngines, lookup: @escaping SourceLookup, in view: NSView, above picture: CALayer) {
         self.engines = engines
@@ -52,6 +59,9 @@ final class ViewerVideo {
 
         controls.onPlayPause = { [weak self] in self?.togglePlay() }
         controls.onMute = { [weak self] in self?.toggleMute() }
+        controls.onVolume = { [weak self] level in self?.setVolume(level) }
+        controls.onSkip = { [weak self] seconds in self?.seek(by: seconds) }
+        controls.onSpeed = { [weak self] speed in self?.setSpeed(speed) }
         controls.onScrub = { [weak self] seconds, isFinal in self?.scrub(to: seconds, isFinal: isFinal) }
         controls.onHover = { [weak self] hover in self?.hover(hover) }
     }
@@ -103,6 +113,7 @@ final class ViewerVideo {
     private func attach(_ playback: any VideoPlayback) {
         self.playback = playback
         playback.isMuted = isMuted
+        playback.volume = volume
         let layer = playback.layer
         layer.isHidden = true
         layer.frame = frame
@@ -126,6 +137,7 @@ final class ViewerVideo {
         problem = nil
         startsAt = nil
         autoplays = false
+        clickUndo = nil
         preview.hide()
         setControlsVisible(false, animated: false)
     }
@@ -143,7 +155,7 @@ final class ViewerVideo {
             }
             if autoplays {
                 autoplays = false
-                playback.play(rate: 1)
+                playback.play(rate: speed)
             }
             lastTime = playback.currentTime
             if !controlsVisible, !playback.layer.isHidden || playback.isShowingFrame { revealControls() }
@@ -161,8 +173,8 @@ final class ViewerVideo {
         }
         if playback.status != .ready { setControlsVisible(false, animated: true) }
         controls.update(
-            time: playback.currentTime, duration: playback.duration, isPlaying: playback.rate != 0,
-            isMuted: playback.isMuted)
+            time: playback.currentTime, duration: playback.duration, rate: playback.rate, speed: speed,
+            isMuted: playback.isMuted, volume: volume)
         onChange?()
     }
 
@@ -179,7 +191,7 @@ final class ViewerVideo {
     }
 
     func layoutControls(in bounds: CGRect) {
-        let width = min(bounds.width - 40, 640)
+        let width = min(bounds.width - 40, 760)
         controls.frame = CGRect(
             x: (bounds.width - width) / 2, y: bounds.height - VideoControlsView.height - 20, width: max(0, width),
             height: VideoControlsView.height)
@@ -194,9 +206,48 @@ final class ViewerVideo {
             playback.pause()
             setControlsVisible(true, animated: true)
         } else {
-            playback.play(rate: 1)
+            playback.play(rate: speed)
             scheduleHide()
         }
+    }
+
+    /// A click on the video. It acts at once, rather than waiting out the double-click interval, and
+    /// remembers enough for `undoClick` to put it back.
+    func click() {
+        guard let playback, playback.status == .ready else { return }
+        clickUndo = (playback.currentTime, playback.rate != 0)
+        togglePlay()
+    }
+
+    /// The second click of a double click: back to playing or paused, at the exact time of the first,
+    /// so a double click leaves no trace but the moment it played or paused.
+    func undoClick() {
+        guard let undo = clickUndo, let playback, playback.status == .ready else { return }
+        clickUndo = nil
+        if undo.wasPlaying {
+            playback.play(rate: speed)
+            scheduleHide()
+        } else {
+            playback.pause()
+            setControlsVisible(true, animated: true)
+        }
+        playback.seek(to: undo.time, exact: true)
+    }
+
+    /// The speed menu, and `=`. Applies at once to a video playing forward.
+    func setSpeed(_ speed: Float) {
+        self.speed = speed
+        if let playback, playback.status == .ready, playback.rate > 0 { playback.play(rate: speed) }
+        playbackChanged()
+        revealControls()
+    }
+
+    /// `[` and `]`: the next speed down or up the menu's list.
+    func stepSpeed(faster: Bool) {
+        let speeds = Self.speeds
+        let next = faster ? speeds.first { $0 > speed } : speeds.last { $0 < speed }
+        guard let next else { return }
+        setSpeed(next)
     }
 
     /// J and L. Each press in the same direction doubles the speed, up to 8×, as in editing apps.
@@ -232,9 +283,21 @@ final class ViewerVideo {
         setControlsVisible(true, animated: true)
     }
 
-    /// M.
+    /// M and the speaker. Unmuting a volume dragged to nothing brings it back to full.
     func toggleMute() {
         isMuted.toggle()
+        if !isMuted, volume == 0 { volume = 1 }
+        playback?.isMuted = isMuted
+        playback?.volume = volume
+        playbackChanged()
+        revealControls()
+    }
+
+    /// The volume slider. Dragging to nothing mutes, and up from there unmutes.
+    func setVolume(_ level: Float) {
+        volume = min(max(level, 0), 1)
+        isMuted = volume == 0
+        playback?.volume = volume
         playback?.isMuted = isMuted
         playbackChanged()
         revealControls()
@@ -251,7 +314,7 @@ final class ViewerVideo {
         // Keyframes while dragging, so it keeps up. The exact frame when the button comes up.
         playback.seek(to: seconds, exact: isFinal)
         if isFinal {
-            if wasPlayingBeforeScrub { playback.play(rate: 1) }
+            if wasPlayingBeforeScrub { playback.play(rate: speed) }
             wasPlayingBeforeScrub = false
             scheduleHide()
         }

@@ -664,6 +664,20 @@ final class TileGridView: NSView, BrowserContent {
         }
     }
 
+    func scrollToEdge(bottom: Bool) {
+        guard result.count > 0 else { return }
+        if bottom {
+            scroll(toTop: tileLayout.frame(of: result.count - 1).maxY - viewportHeight + 4)
+        } else {
+            scroll(toTop: 0)
+        }
+    }
+
+    func scroll(to anchor: ViewAnchor) {
+        guard anchor.row < result.count else { return }
+        scrollAnchorIntoPlace(anchor)
+    }
+
     func row(after move: BrowserMove, from row: Int) -> Int? {
         let count = result.count
         guard count > 0 else { return nil }

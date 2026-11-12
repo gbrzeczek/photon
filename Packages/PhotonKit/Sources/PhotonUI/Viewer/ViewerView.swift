@@ -758,7 +758,13 @@ final class ViewerView: NSView, NSDraggingSource {
         window?.makeFirstResponder(self)
         let point = convert(event.locationInWindow, from: nil)
         if event.clickCount == 2 {
-            guard !isVideo else { return }
+            guard !isVideo else {
+                // Full screen, as in QuickTime Player. The first click already played or paused,
+                // so that's undone, back to the same frame.
+                video.undoClick()
+                window?.toggleFullScreen(nil)
+                return
+            }
             setZoom(geometry.toggledZoom, keeping: point, animated: true)
             return
         }
@@ -787,7 +793,7 @@ final class ViewerView: NSView, NSDraggingSource {
 
     override func mouseUp(with event: NSEvent) {
         // A click on a video that didn't become a drag plays or pauses it, as in QuickTime Player.
-        if isVideo, dragPress != nil, event.clickCount == 1 { video.togglePlay() }
+        if isVideo, dragPress != nil, event.clickCount == 1 { video.click() }
         dragPress = nil
         if pan != nil {
             pan = nil

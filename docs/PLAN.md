@@ -359,11 +359,12 @@ Keyboard navigation is built alongside the grid, list and viewer, not added duri
 | Viewer | Cmd-Equals, Cmd-Minus, Cmd-0 | Zoom in, zoom out, fit to window |
 | Video | Space | Play or pause |
 | Video | J, K, L | Reverse, pause, play forward |
-| Video | Shift-Left, Shift-Right | Seek 5 seconds |
+| Video | Shift-Left, Shift-Right | Seek 5 seconds, as the skip buttons do |
 | Video | Option-Left, Option-Right | Step one frame |
 | Video | M | Mute |
+| Video | `[`, `]`, `=` | Slower, faster, normal speed |
 
-Space closes a photo in the viewer, so it works as a quick look toggle. For videos it plays and pauses, and Escape closes. J and L each double the speed in their direction up to 8×, as in editing apps, and J only plays backward where AVFoundation can. A click on a video plays or pauses it, as in QuickTime Player. Letters are matched by character, like Period.
+Space closes a photo in the viewer, so it works as a quick look toggle. For videos it plays and pauses, and Escape closes. J and L each double the speed in their direction up to 8×, as in editing apps, and J only plays backward where AVFoundation can. A click on a video plays or pauses it, and a double click enters or leaves full screen, as in QuickTime Player. Letters are matched by character, like Period.
 
 The viewer also takes a pinch, a mouse wheel or a scroll with Command or Option held to zoom, the toolbar's zoom buttons, a double click or two-finger double tap to toggle actual size, dragging or a trackpad scroll to pan when zoomed in, and a two-finger swipe to the next photo at fit. Double-clicking a tile or row opens it. In the grid, a scroll with Command or Option held changes the tile size. These need the mouse or trackpad, and everything they do has a key.
 
@@ -378,7 +379,7 @@ libmpv uses `vo=libmpv` and the OpenGL render API, drawn into a `CAOpenGLLayer` 
 
 **Reads.** AVFoundation never gets a file URL. `ScheduledResourceLoader` gives it a URL on a private scheme and answers each loading request with one I/O job: open the file, check its size and modified time against the library, read in 1 MB pieces, check again, close. A request is answered with at most 4 MB, and AVFoundation asks again for the rest, so a request to the end of a large file never pulls all of it into memory, and no job holds the volume for long. Playback reads at `visible`, and background thumbnails at `backgroundWork`. No handle stays open between requests, so `willUnmount` finds nothing to close but what's mid-read. A read that fails for the drive's sake makes the playback `unavailable`, which retries from the same place once the volume is back, and a file AVFoundation can't decode is `unsupported`.
 
-**Controls.** A transport bar on Liquid Glass at the bottom of the viewer: play and pause, elapsed and remaining time, a scrubber and mute. It appears when the video is ready and on any pointer movement, and goes 2.5 seconds after the last one while playing. It stays while paused or in use. None of its controls take focus, so the keys stay with the viewer. Mute carries from one video to the next.
+**Controls.** A transport bar on Liquid Glass at the bottom of the viewer: skip back, play and pause, skip forward, elapsed and remaining time, a scrubber, speed, the speaker with a volume slider that opens on hover, and full screen. It appears when the video is ready and on any pointer movement, and goes 2.5 seconds after the last one while playing. It stays while paused or in use. None of its controls take focus, so the keys stay with the viewer. Mute, volume and speed carry from one video to the next.
 
 **Scrub previews.** Hovering over the scrubber or dragging it shows a frame above the bar, with its time. Frames come from the playback's own asset, at the nearest keyframe within half a second, at 160 pt. One decodes at a time, and only the latest request waits behind it, so a fast drag never builds a queue. A drag also moves the video itself to keyframes as it goes, then to the exact frame when the button comes up, and playing resumes if it was playing.
 
@@ -447,12 +448,15 @@ By the user's request from Milestone 5 on, to spend less time on measurement and
 
 ## Kinda-urgent TODO
 
-Asked for by the user, ahead of the remaining milestones. Each one adds to the [shortcut table](#keyboard-navigation) when it lands.
+Asked for by the user, ahead of the remaining milestones. All built, and listed here until they've been tried in the running app with a real pointer:
 
-1. **Scroll to top and bottom.** Home and End already move the current item in the grid and list, but there's nothing for the mouse. Add a way that works with the mouse, such as a button that appears after scrolling far and scrolls to the top or bottom, and check any new keys against the table, since Cmd-Up already goes to the parent folder. Scroll smoothly, and jump at once with Reduce Motion. **Go back:** worth adding, cheaply. After any jump of more than a screen (Home, End, scroll to top or bottom, a sidebar click that lands in the same source), show a small "Back" pill for a few seconds that returns to the asset you were on, anchored to the asset as sessions are. One level only, no history stack.
-2. **Playback speed controls.** J and L already double the speed up to 8×, but nothing shows the speed or sets a slower one. Add a speed menu to the transport bar, 0.5×, 1×, 1.25×, 1.5×, 2×, with keys to match, and show the current speed when it isn't 1×. Keep pitch-corrected audio. Decide whether the speed carries from one video to the next, as mute does.
-3. **Skip forward and backward.** Shift-Left and Shift-Right already seek 5 seconds. Add skip buttons to the transport bar, likely 10 seconds as in QuickTime Player, and check the step lengths for keys and buttons against each other.
-4. **Release on a tag as well as on a push.** Pushing a version tag should also build and publish a release, besides every push to main that passes CI. This amends the decision in [Distribution](#distribution), which replaced tag-only releases: decide how a pushed tag's name relates to `v<marketing version>.<build number>`, that a tag's release still needs passing CI on its commit, and that a tag already released by a push publishes nothing new.
+1. **Scroll to top and bottom.** Built. While a view at least three screens tall scrolls, a glass pair of buttons at the bottom trailing corner scrolls to the top or bottom, leaving the selection as it is, and goes 1.5 seconds after scrolling stops. Home and End still move the current item. The jump is instant rather than animated, because easing through 100,000 tiles would show nothing useful on the way. **Back:** after either button, Home or End, a Back pill appears for 6 seconds and returns once to the tile that was on screen, and to the current item if Home or End moved it, held by asset. Switching source or view forgets it. No history stack.
+2. **Playback speed.** Built. A speed button in the transport bar offers 0.5×, 0.75×, 1×, 1.25×, 1.5× and 2×, and `[`, `]` and `=` step down, up and back to 1×, as in VLC. It's what Space and the play button play at, and J and L still shuttle apart from it. The button shows the shuttle speed while shuttling. Audio keeps its pitch. Speed carries from one video to the next, as mute does.
+3. **Skip forward and backward.** Built. Skip buttons beside play go 5 seconds, the same as Shift-Left and Shift-Right.
+4. **A full screen button.** Built: in the toolbar, and at the end of the transport bar, with the symbol switching between enter and exit. Double-clicking a video also toggles full screen, as in QuickTime Player. A click plays or pauses at once, with no wait for the double-click interval, so the second click of a double click puts back both the play state and the exact frame of the first.
+5. **A volume slider.** Built. Hovering over the speaker opens a slider beside it, and a click still mutes. Volume carries from one video to the next. Dragging it to nothing mutes, and unmuting from there brings it back to full.
+
+**Not done, by the user's decision:** releasing on a pushed tag. GitHub's standard runners are free for public repositories, so a release on every push to main costs nothing and stays the only trigger, as in [Distribution](#distribution).
 
 ## Milestones
 

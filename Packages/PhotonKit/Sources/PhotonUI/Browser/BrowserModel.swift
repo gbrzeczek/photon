@@ -41,6 +41,10 @@ protocol BrowserContent: AnyObject {
     func selectionDidChange()
     /// Brings the current item on screen, without moving more than needed.
     func revealCurrent()
+    /// Scrolls to the first or last row, leaving the selection as it is.
+    func scrollToEdge(bottom: Bool)
+    /// Puts a row back where an anchor says it was.
+    func scroll(to anchor: ViewAnchor)
     /// Where a move lands from `row`.
     func row(after move: BrowserMove, from row: Int) -> Int?
     /// Takes keyboard focus.
@@ -128,6 +132,11 @@ public final class BrowserModel {
     @ObservationIgnored var layoutWidth: CGFloat = 1
     /// Called after each result lands, with its row count.
     @ObservationIgnored var onResult: ((Int) -> Void)?
+    /// Where a jump left from, for Back. See BrowserModel+Jumps.
+    @ObservationIgnored var backPlace: BackPlace? {
+        didSet { if backPlace != oldValue { onBackPlaceChange?(backPlace != nil) } }
+    }
+    @ObservationIgnored var onBackPlaceChange: ((Bool) -> Void)?
 
     nonisolated private static let signposter = OSSignposter(subsystem: "app.photon", category: "Browser")
     /// How often the library may be queried again while indexing changes it.
@@ -198,6 +207,7 @@ public final class BrowserModel {
         guard source != self.source else { return }
         closeViewer(animated: false)
         flushSession()
+        backPlace = nil
         Task {
             let session = try? await library.store.session(for: source)
             guard let session else {
@@ -472,6 +482,7 @@ public final class BrowserModel {
         }
         guard let target = active?.row(after: move, from: from) else { return }
         guard target != from || !extending else { return }
+        if move == .home || move == .end, target != from { rememberPlace() }
         let asset = AssetID(rawValue: result.assetIDs[target])
         if extending {
             selection.extend(to: target, asset: asset)
