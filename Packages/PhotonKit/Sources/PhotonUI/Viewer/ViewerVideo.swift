@@ -18,6 +18,11 @@ final class ViewerVideo {
     private weak var below: CALayer?
     let controls = VideoControlsView()
     let preview = ScrubPreviewView()
+    /// Above the bar, so opening them never moves it.
+    let volumePanel = VolumePanel(frame: CGRect(origin: .zero, size: VolumePanel.size))
+    let speedPanel = SpeedPanel(frame: CGRect(origin: .zero, size: SpeedPanel.size))
+    let volumePopup: BarPopup
+    let speedPopup: BarPopup
 
     private(set) var playback: (any VideoPlayback)?
     private(set) var asset: AssetID?
@@ -58,16 +63,38 @@ final class ViewerVideo {
         self.lookup = lookup
         self.view = view
         below = picture
+        volumePopup = BarPopup(content: volumePanel, size: VolumePanel.size)
+        speedPopup = BarPopup(content: speedPanel, size: SpeedPanel.size)
         controls.alphaValue = 0
         controls.isHidden = true
         view.addSubview(controls)
         view.addSubview(preview)
+        view.addSubview(volumePopup)
+        view.addSubview(speedPopup)
+        volumePopup.anchor = controls.muteButton
+        speedPopup.anchor = controls.speedButton
+        volumePopup.isInUse = { [weak volumePanel] in volumePanel?.slider.isTracking == true }
+        speedPopup.isInUse = { [weak speedPanel] in speedPanel?.slider.isTracking == true }
+        for popup in [volumePopup, speedPopup] {
+            popup.onClose = { [weak self] in self?.scheduleHide() }
+        }
+        volumePanel.onChange = { [weak self] level in self?.setVolume(level) }
+        volumePanel.slider.onEnd = { [weak self] in self?.volumePopup.closeSoon() }
+        speedPanel.onChange = { [weak self] speed in self?.setSpeed(speed) }
+        speedPanel.slider.onEnd = { [weak self] in self?.speedPopup.closeSoon() }
 
         controls.onPlayPause = { [weak self] in self?.togglePlay() }
         controls.onMute = { [weak self] in self?.toggleMute() }
-        controls.onVolume = { [weak self] level in self?.setVolume(level) }
         controls.onSkip = { [weak self] seconds in self?.seek(by: seconds) }
-        controls.onSpeed = { [weak self] speed in self?.setSpeed(speed) }
+        controls.onSpeedButton = { [weak self] in self?.toggleSpeeds() }
+        controls.muteButton.onHover = { [weak self] inside in
+            guard let self else { return }
+            if inside { self.openPopup(self.volumePopup) } else { self.volumePopup.closeSoon() }
+        }
+        controls.speedButton.onHover = { [weak self] inside in
+            guard let self else { return }
+            if inside { self.openPopup(self.speedPopup) } else { self.speedPopup.closeSoon() }
+        }
         controls.onScrub = { [weak self] seconds, isFinal in self?.scrub(to: seconds, isFinal: isFinal) }
         controls.onHover = { [weak self] hover in self?.hover(hover) }
     }
@@ -182,6 +209,8 @@ final class ViewerVideo {
         controls.update(
             time: playback.currentTime, duration: playback.duration, rate: playback.rate, speed: speed,
             isMuted: playback.isMuted, volume: volume)
+        volumePanel.update(level: isMuted ? 0 : volume)
+        speedPanel.update(speed: speed)
         onChange?()
     }
 
@@ -310,6 +339,23 @@ final class ViewerVideo {
         revealControls()
     }
 
+    // MARK: Volume and speed panels
+
+    /// A click on the speed button opens the speeds too, for VoiceOver and for when the pointer
+    /// came to rest on it while the bar was hidden.
+    func toggleSpeeds() {
+        volumePopup.close()
+        openPopup(speedPopup)
+    }
+
+    private func openPopup(_ popup: BarPopup) {
+        guard controlsVisible, playback?.status == .ready else { return }
+        let other = popup === volumePopup ? speedPopup : volumePopup
+        other.close()
+        hideTask?.cancel()
+        popup.open(barTop: controls.frame.minY)
+    }
+
     // MARK: Scrubbing
 
     private func scrub(to seconds: Double, isFinal: Bool) {
@@ -367,7 +413,9 @@ final class ViewerVideo {
         hideTask = Task { [weak self] in
             try? await Task.sleep(for: Self.hideDelay)
             guard !Task.isCancelled, let self else { return }
-            guard self.isPlaying, !self.controls.isInUse, !self.isPointerOverControls else { return }
+            guard self.isPlaying, !self.controls.isInUse, !self.isPointerOverControls,
+                !self.volumePopup.isOpen, !self.speedPopup.isOpen
+            else { return }
             self.setControlsVisible(false, animated: true)
             self.preview.hide()
         }
@@ -382,6 +430,10 @@ final class ViewerVideo {
     private func setControlsVisible(_ visible: Bool, animated: Bool) {
         guard visible != controlsVisible else { return }
         controlsVisible = visible
+        if !visible {
+            volumePopup.close()
+            speedPopup.close()
+        }
         if visible { controls.isHidden = false }
         guard animated else {
             controls.alphaValue = visible ? 1 : 0

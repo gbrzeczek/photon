@@ -288,6 +288,43 @@ struct VideoViewerTests {
         video.pause()
     }
 
+    @Test("Volume and speed open as vertical panels above the bar, which doesn't move, and the speed snaps")
+    func panels() async throws {
+        let browser = try await makeBrowser()
+        defer { browser.tearDown() }
+        browser.model.select(row: 1)
+        browser.model.openViewer()
+        #expect(try await until { browser.video.status == .ready })
+        let video = browser.video
+        browser.press("m", code: 46)
+        video.pointerMoved()
+        #expect(try await until { video.areControlsVisibleForTesting })
+        let bar = video.controls.frame
+
+        video.controls.muteButton.onHover?(true)
+        #expect(video.volumePopup.isOpen)
+        #expect(video.volumePopup.frame.maxY < bar.minY)
+        #expect(video.controls.frame == bar)
+        video.volumePanel.slider.doubleValue = 0.5
+        video.volumePanel.onChange?(0.5)
+        #expect(video.volume == 0.5 && !video.isMuted)
+
+        // Opening one closes the other.
+        video.controls.speedButton.onHover?(true)
+        #expect(video.speedPopup.isOpen)
+        #expect(!video.volumePopup.isOpen)
+        #expect(video.controls.frame == bar)
+        video.speedPanel.setForTesting(index: 4)
+        #expect(video.speed == ViewerVideo.speeds[4])
+        // A key moves the slider too.
+        browser.press("=", code: 24)
+        #expect(video.speedPanel.slider.doubleValue == Double(ViewerVideo.speeds.firstIndex(of: 1)!))
+
+        video.pause()
+        video.stop()
+        #expect(!video.speedPopup.isOpen)
+    }
+
     @Test("A held arrow key opens no player for the videos it passes")
     func heldKey() async throws {
         let browser = try await makeBrowser()

@@ -12,7 +12,8 @@ import UniformTypeIdentifiers
 /// without driving the app, `PHOTON_VIEWER_ZOOM` zooms in that many steps, and
 /// `PHOTON_VIEWER_SCROLL` that many wheel notches. `PHOTON_INSPECTOR=<row>` selects that row and shows the
 /// inspector, for looking at it the same way. `PHOTON_HOVER_ROW=<row>` rests the pointer on that tile
-/// after 2 seconds, so that a video's preview plays in it.
+/// after 2 seconds, so that a video's preview plays in it. `PHOTON_VIDEO_PANEL=volume` or `speed` opens
+/// that panel above a video's bar in the viewer, a second after it opens.
 @MainActor
 enum DevelopmentHooks {
     static func applyAppearance() {
@@ -48,6 +49,14 @@ enum DevelopmentHooks {
             for step in 0..<(environment["PHOTON_VIEWER_ZOOM"].flatMap(Int.init) ?? 0) {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1 + 0.2 * Double(step)) {
                     model.stepZoom(larger: true)
+                }
+            }
+            if let panel = environment["PHOTON_VIDEO_PANEL"] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                    guard let video = model.viewer?.video else { return }
+                    video.pointerMoved()
+                    let button = panel == "speed" ? video.controls.speedButton : video.controls.muteButton
+                    button.onHover?(true)
                 }
             }
             for step in 0..<(environment["PHOTON_VIEWER_SCROLL"].flatMap(Int.init) ?? 0) {

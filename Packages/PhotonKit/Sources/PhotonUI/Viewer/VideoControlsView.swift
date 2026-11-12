@@ -9,20 +9,19 @@ final class VideoControlsView: NSView {
     private let playButton = NSButton()
     private let backButton = NSButton()
     private let forwardButton = NSButton()
-    private let speedButton = NSButton()
+    let speedButton = HoverButton()
+    let muteButton = HoverButton()
     private let fullScreenButton = NSButton()
     private let elapsed = NSTextField(labelWithString: "0:00")
     private let remaining = NSTextField(labelWithString: "-0:00")
     let scrubber = ScrubberSlider()
-    let volume = VolumeControl()
 
     var onPlayPause: (() -> Void)?
     /// Seconds to skip, negative for back.
     var onSkip: ((Double) -> Void)?
-    var onSpeed: ((Float) -> Void)?
+    /// The speed button was clicked, which opens the speeds above it.
+    var onSpeedButton: (() -> Void)?
     var onMute: (() -> Void)?
-    /// A volume chosen on the slider, from 0 to 1.
-    var onVolume: ((Float) -> Void)?
     /// A position chosen on the scrubber, in seconds. `isFinal` when the button comes up.
     var onScrub: ((Double, _ isFinal: Bool) -> Void)?
     /// Where the pointer or the knob is over the scrubber, in seconds and in this view's coordinates.
@@ -30,7 +29,7 @@ final class VideoControlsView: NSView {
     var onHover: ((Double, CGFloat)?) -> Void = { _ in }
 
     private var duration: Double = 0
-    private var speed: Float = 1
+    private var shownSpeaker = ""
     private var fullScreenObservers: [any NSObjectProtocol] = []
     static let height: CGFloat = 44
     /// How far the skip buttons go, the same as Shift-Left and Shift-Right.
@@ -58,16 +57,14 @@ final class VideoControlsView: NSView {
         speedButton.contentTintColor = .labelColor
         speedButton.refusesFirstResponder = true
         speedButton.target = self
-        speedButton.action = #selector(showSpeeds)
+        speedButton.action = #selector(speedClicked)
         speedButton.title = Self.format(rate: 1)
         speedButton.setAccessibilityLabel("Playback Speed")
         speedButton.toolTip = "Playback speed"
         speedButton.widthAnchor.constraint(equalToConstant: 40).isActive = true
 
-        volume.muteButton.target = self
-        volume.muteButton.action = #selector(mute)
-        volume.slider.target = self
-        volume.slider.action = #selector(volumeChanged)
+        Self.configure(muteButton, symbol: "speaker.wave.3.fill", label: "Mute", target: self)
+        muteButton.action = #selector(mute)
 
         for label in [elapsed, remaining] {
             label.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
@@ -87,7 +84,7 @@ final class VideoControlsView: NSView {
         scrubber.onEnd = { [weak self] in self?.scrubEnded() }
 
         let stack = NSStackView(views: [
-            backButton, playButton, forwardButton, elapsed, scrubber, remaining, speedButton, volume, fullScreenButton,
+            backButton, playButton, forwardButton, elapsed, scrubber, remaining, speedButton, muteButton, fullScreenButton,
         ])
         stack.orientation = .horizontal
         stack.spacing = 6
@@ -138,7 +135,6 @@ final class VideoControlsView: NSView {
     /// chose another.
     func update(time: Double, duration: Double, rate: Float, speed: Float, isMuted: Bool, volume level: Float) {
         self.duration = duration
-        self.speed = speed
         if !scrubber.isTracking { scrubber.doubleValue = duration > 0 ? time / duration : 0 }
         let shown = scrubber.isTracking ? scrubber.doubleValue * duration : time
         let elapsedText = TileArtwork.format(Int(shown.rounded(.down)))
@@ -159,7 +155,7 @@ final class VideoControlsView: NSView {
             speedButton.title = speedText
             speedButton.setAccessibilityValue(speedText)
         }
-        self.volume.update(isMuted: isMuted, volume: level)
+        updateSpeaker(level: isMuted ? 0 : level)
         updateFullScreen()
     }
 
@@ -170,31 +166,30 @@ final class VideoControlsView: NSView {
         return (rate < 0 ? "−" : "") + number + "×"
     }
 
-    /// Whether a scrub, a volume drag or a click is under way, so that the bar stays up.
-    var isInUse: Bool { scrubber.isTracking || volume.isInUse }
+    /// The speaker shows how loud, and a muted one is crossed out.
+    private func updateSpeaker(level: Float) {
+        let symbol = switch level {
+        case 0: "speaker.slash.fill"
+        case ..<0.34: "speaker.wave.1.fill"
+        case ..<0.67: "speaker.wave.2.fill"
+        default: "speaker.wave.3.fill"
+        }
+        guard symbol != shownSpeaker else { return }
+        shownSpeaker = symbol
+        let label = level == 0 ? "Unmute" : "Mute"
+        muteButton.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+        muteButton.setAccessibilityLabel(label)
+        muteButton.toolTip = label
+    }
+
+    /// Whether a scrub is under way, so that the bar stays up.
+    var isInUse: Bool { scrubber.isTracking }
 
     @objc private func playPause() { onPlayPause?() }
     @objc private func skipBack() { onSkip?(-Self.skipSeconds) }
     @objc private func skipForward() { onSkip?(Self.skipSeconds) }
     @objc private func mute() { onMute?() }
-    @objc private func volumeChanged() { onVolume?(Float(volume.slider.doubleValue)) }
-
-    @objc private func showSpeeds() {
-        let menu = NSMenu()
-        for choice in ViewerVideo.speeds {
-            let item = NSMenuItem(title: Self.format(rate: choice), action: #selector(chooseSpeed(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = choice
-            item.state = choice == speed ? .on : .off
-            menu.addItem(item)
-        }
-        menu.popUp(positioning: menu.items.first { $0.state == .on }, at: NSPoint(x: 0, y: speedButton.bounds.height), in: speedButton)
-    }
-
-    @objc private func chooseSpeed(_ sender: NSMenuItem) {
-        guard let choice = sender.representedObject as? Float else { return }
-        onSpeed?(choice)
-    }
+    @objc private func speedClicked() { onSpeedButton?() }
 
     // MARK: Full screen
 
@@ -249,120 +244,6 @@ final class VideoControlsView: NSView {
         }
         let x = convert(NSPoint(x: scrubber.knobCenterX(fraction: fraction), y: 0), from: scrubber).x
         onHover((fraction * duration, x))
-    }
-}
-
-/// The speaker, which mutes on a click, and a volume slider that opens beside it while the pointer is
-/// over either, as in QuickTime Player.
-@MainActor
-final class VolumeControl: NSView {
-    let muteButton = NSButton()
-    let slider = TrackingSlider()
-    private var sliderWidth: NSLayoutConstraint!
-    private var trackingArea: NSTrackingArea?
-    private var collapseTask: Task<Void, Never>?
-    private(set) var isExpanded = false
-    private var shownSymbol = "speaker.wave.3.fill"
-    static let expandedWidth: CGFloat = 72
-
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        VideoControlsView.configure(muteButton, symbol: "speaker.wave.3.fill", label: "Mute", target: self)
-        slider.minValue = 0
-        slider.maxValue = 1
-        slider.doubleValue = 1
-        slider.isContinuous = true
-        slider.controlSize = .small
-        slider.refusesFirstResponder = true
-        slider.setAccessibilityLabel("Volume")
-        slider.alphaValue = 0
-        slider.isHidden = true
-        slider.onEnd = { [weak self] in self?.collapseLater() }
-
-        let stack = NSStackView(views: [muteButton, slider])
-        stack.orientation = .horizontal
-        stack.spacing = 4
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
-        sliderWidth = slider.widthAnchor.constraint(equalToConstant: 0)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-            sliderWidth,
-        ])
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("Not used.") }
-
-    var isInUse: Bool { slider.isTracking }
-
-    func update(isMuted: Bool, volume: Float) {
-        let level = isMuted ? 0 : volume
-        if !slider.isTracking, slider.doubleValue != Double(level) { slider.doubleValue = Double(level) }
-        let symbol = switch level {
-        case 0: "speaker.slash.fill"
-        case ..<0.34: "speaker.wave.1.fill"
-        case ..<0.67: "speaker.wave.2.fill"
-        default: "speaker.wave.3.fill"
-        }
-        let label = level == 0 ? "Unmute" : "Mute"
-        if shownSymbol != symbol {
-            shownSymbol = symbol
-            muteButton.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
-            muteButton.setAccessibilityLabel(label)
-            muteButton.toolTip = label
-        }
-        slider.setAccessibilityValue("\(Int((level * 100).rounded())) percent")
-    }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let trackingArea { removeTrackingArea(trackingArea) }
-        let area = NSTrackingArea(
-            rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
-        addTrackingArea(area)
-        trackingArea = area
-    }
-
-    override func mouseEntered(with event: NSEvent) { setExpanded(true) }
-    override func mouseExited(with event: NSEvent) { collapseLater() }
-
-    /// After a moment, so that passing between the speaker and the slider doesn't close it.
-    private func collapseLater() {
-        collapseTask?.cancel()
-        collapseTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(400))
-            guard !Task.isCancelled, let self, !self.slider.isTracking, !self.isPointerInside else { return }
-            self.setExpanded(false)
-        }
-    }
-
-    private var isPointerInside: Bool {
-        guard let window else { return false }
-        return bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))
-    }
-
-    func setExpanded(_ expanded: Bool) {
-        collapseTask?.cancel()
-        guard expanded != isExpanded else { return }
-        isExpanded = expanded
-        if expanded { slider.isHidden = false }
-        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = reduceMotion ? 0 : 0.18
-            context.allowsImplicitAnimation = true
-            sliderWidth.animator().constant = expanded ? Self.expandedWidth : 0
-            slider.animator().alphaValue = expanded ? 1 : 0
-            superview?.layoutSubtreeIfNeeded()
-        } completionHandler: { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self, !self.isExpanded else { return }
-                self.slider.isHidden = true
-            }
-        }
     }
 }
 
