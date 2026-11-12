@@ -1,7 +1,9 @@
 name: Photon's libmpv
 description: >
   Puts Photon's own LGPL build of libmpv and FFmpeg in Vendor/mpv, from the cache when this version of
-  scripts/mpv/build.sh has built it before, and otherwise by building it, which takes a while.
+  scripts/mpv/build.sh and this file has built it before, and otherwise by building it, which takes a while.
+  GitHub keeps a cache for 7 days after its last use. Main's cache serves every branch, but a
+  cache saved by a pull request serves only that pull request, so main builds once after a merge.
 runs:
   using: composite
   steps:
@@ -13,7 +15,7 @@ runs:
           Vendor/mpv/lib
           Vendor/mpv/LICENSES
           Vendor/mpv/manifest.txt
-        key: libmpv-${{ runner.os }}-${{ hashFiles('scripts/mpv/build.sh') }}
+        key: libmpv-${{ runner.os }}-${{ hashFiles('scripts/mpv/build.sh', '.github/actions/libmpv/action.yml') }}
 
     - name: Build libmpv
       if: steps.cache.outputs.cache-hit != 'true'
@@ -30,7 +32,7 @@ runs:
           Vendor/mpv/lib
           Vendor/mpv/LICENSES
           Vendor/mpv/manifest.txt
-        key: libmpv-${{ runner.os }}-${{ hashFiles('scripts/mpv/build.sh') }}
+        key: libmpv-${{ runner.os }}-${{ hashFiles('scripts/mpv/build.sh', '.github/actions/libmpv/action.yml') }}
 
     - name: Show libmpv
       shell: bash
