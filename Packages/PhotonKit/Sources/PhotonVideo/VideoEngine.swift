@@ -40,8 +40,9 @@ public protocol VideoPlayback: AnyObject {
     func pause()
     /// `exact` decodes to the very frame. Otherwise the nearest keyframe, which is what a scrub wants.
     func seek(to seconds: Double, exact: Bool)
-    /// The same, calling `completion` on the main thread once the frame there is showing, or with false
-    /// when another seek replaced it.
+    /// The same, calling `completion` on the main thread once the seek has landed, or with false when
+    /// another seek replaced it. The frame there may not be showing yet, so check `isShowingFrame` and
+    /// the time before revealing the layer.
     func seek(to seconds: Double, exact: Bool, completion: @escaping (Bool) -> Void)
     func step(frames: Int)
     /// A frame for a scrub preview, near `seconds`, at most `maxPixelSize` on its long edge. Only the

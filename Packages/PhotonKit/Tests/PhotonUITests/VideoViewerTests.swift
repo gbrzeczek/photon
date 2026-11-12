@@ -230,6 +230,8 @@ struct VideoViewerTests {
         #expect(browser.preview.playback == nil)
         #expect(try await until { browser.preview.isPlaying })
         let playback = try #require(browser.preview.playback)
+        // Shown only with a frame, never as an empty layer, which draws black.
+        #expect(playback.isShowingFrame)
         #expect(playback.isMuted)
         #expect(playback.loops)
         #expect(playback.layer.superlayer != nil)
