@@ -445,6 +445,15 @@ By the user's request from Milestone 5 on, to spend less time on measurement and
 - **Instruments only for a real problem.** An Animation Hitches trace is recorded only when the in-app timers show one.
 - **The T7 Touch library is optional.** Measuring on the real drive is welcome, read-only as always, but no milestone needs it.
 
+## Kinda-urgent TODO
+
+Asked for by the user, ahead of the remaining milestones. Each one adds to the [shortcut table](#keyboard-navigation) when it lands.
+
+1. **Scroll to top and bottom.** Home and End already move the current item in the grid and list, but there's nothing for the mouse. Add a way that works with the mouse, such as a button that appears after scrolling far and scrolls to the top or bottom, and check any new keys against the table, since Cmd-Up already goes to the parent folder. Scroll smoothly, and jump at once with Reduce Motion. **Go back:** worth adding, cheaply. After any jump of more than a screen (Home, End, scroll to top or bottom, a sidebar click that lands in the same source), show a small "Back" pill for a few seconds that returns to the asset you were on, anchored to the asset as sessions are. One level only, no history stack.
+2. **Playback speed controls.** J and L already double the speed up to 8×, but nothing shows the speed or sets a slower one. Add a speed menu to the transport bar, 0.5×, 1×, 1.25×, 1.5×, 2×, with keys to match, and show the current speed when it isn't 1×. Keep pitch-corrected audio. Decide whether the speed carries from one video to the next, as mute does.
+3. **Skip forward and backward.** Shift-Left and Shift-Right already seek 5 seconds. Add skip buttons to the transport bar, likely 10 seconds as in QuickTime Player, and check the step lengths for keys and buttons against each other.
+4. **Release on a tag as well as on a push.** Pushing a version tag should also build and publish a release, besides every push to main that passes CI. This amends the decision in [Distribution](#distribution), which replaced tag-only releases: decide how a pushed tag's name relates to `v<marketing version>.<build number>`, that a tag's release still needs passing CI on its commit, and that a tag already released by a push publishes nothing new.
+
 ## Milestones
 
 | # | Milestone | Done when |
