@@ -158,8 +158,11 @@ struct OrganizationBrowserTests {
             browser.press(.right)
             // Waits for a held key to rest, like the status bar.
             #expect(browser.model.inspectedAsset == first)
-            try await Task.sleep(for: .milliseconds(300))
             let third = AssetID(rawValue: browser.model.result.assetIDs[2])
+            // Then follows once it rests. A slow machine may take longer than the rest delay.
+            for _ in 0..<250 where browser.model.inspectedAsset != third {
+                try await Task.sleep(for: .milliseconds(20))
+            }
             #expect(browser.model.inspectedAsset == third)
 
             await browser.waitForResult { browser.model.addTag(named: "Kept", to: [third]) }
@@ -182,7 +185,15 @@ struct OrganizationBrowserTests {
             #expect(try await browser.library.store.latestSession()?.source == .album(album))
             await browser.waitForResult { browser.model.deleteAlbum(album) }
             #expect(browser.model.source?.folder != nil)
-            #expect(browser.library.albums.isEmpty)
+            // The album list refreshes after the delete's own write, which can land after the folder's
+            // result on a slow machine.
+            var isGone = false
+            for _ in 0..<250 {
+                isGone = browser.library.albums.isEmpty
+                if isGone { break }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            #expect(isGone)
         }
     }
 }
