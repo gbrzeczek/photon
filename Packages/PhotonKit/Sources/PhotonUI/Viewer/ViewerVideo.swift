@@ -18,6 +18,11 @@ final class ViewerVideo {
     private weak var below: CALayer?
     let controls = VideoControlsView()
     let preview = ScrubPreviewView()
+    /// Above the bar, so opening them never moves it.
+    let volumePanel = VolumePanel(frame: CGRect(origin: .zero, size: VolumePanel.size))
+    let speedPanel = SpeedPanel(frame: CGRect(origin: .zero, size: SpeedPanel.size))
+    let volumePopup: BarPopup
+    let speedPopup: BarPopup
 
     private(set) var playback: (any VideoPlayback)?
     private(set) var asset: AssetID?
@@ -29,29 +34,68 @@ final class ViewerVideo {
     /// Where it was, so that a video whose drive came back carries on from there.
     private var lastTime: Double = 0
     private var wasPlayingBeforeScrub = false
-    /// Mute carries from one video to the next, as it does in QuickTime Player.
+    /// What a click changed, so that the second click of a double click can put it back.
+    private var clickUndo: (time: Double, wasPlaying: Bool)?
+    /// Mute, volume and speed carry from one video to the next, as mute does in QuickTime Player.
     private(set) var isMuted = false
+    private(set) var volume: Float = 1
+    /// What Space and the play button play at. J and L shuttle apart from it.
+    private(set) var speed: Float = 1
     /// Why nothing is playing, for the status bar.
     private(set) var problem: String?
     private var controlsVisible = false
+    /// The viewer's backdrop. The player keeps the video's exact aspect inside the frame, which comes
+    /// from the stored size and can differ by a few pixels, so its edges are this color rather than
+    /// clear, where the stretched thumbnail beneath would show.
+    var backdropColor: CGColor? {
+        didSet { playback?.layer.backgroundColor = backdropColor }
+    }
     /// Tells the viewer that the status or what's showing changed.
     var onChange: (() -> Void)?
 
     static let hideDelay: Duration = .seconds(2.5)
     private static let fastestRate: Float = 8
+    /// The speed slider's steps, and what `[` and `]` step through. 1× is in the middle, with as many
+    /// steps either side.
+    static let speeds: [Float] = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2]
 
     init(engines: VideoEngines, lookup: @escaping SourceLookup, in view: NSView, above picture: CALayer) {
         self.engines = engines
         self.lookup = lookup
         self.view = view
         below = picture
+        volumePopup = BarPopup(content: volumePanel, size: VolumePanel.size)
+        speedPopup = BarPopup(content: speedPanel, size: SpeedPanel.size)
         controls.alphaValue = 0
         controls.isHidden = true
         view.addSubview(controls)
         view.addSubview(preview)
+        view.addSubview(volumePopup)
+        view.addSubview(speedPopup)
+        volumePopup.anchor = controls.muteButton
+        speedPopup.anchor = controls.speedButton
+        volumePopup.isInUse = { [weak volumePanel] in volumePanel?.slider.isTracking == true }
+        speedPopup.isInUse = { [weak speedPanel] in speedPanel?.slider.isTracking == true }
+        for popup in [volumePopup, speedPopup] {
+            popup.onClose = { [weak self] in self?.scheduleHide() }
+        }
+        volumePanel.onChange = { [weak self] level in self?.setVolume(level) }
+        volumePanel.slider.onEnd = { [weak self] in self?.volumePopup.closeSoon() }
+        speedPanel.onChange = { [weak self] speed in self?.setSpeed(speed) }
+        speedPanel.slider.onEnd = { [weak self] in self?.speedPopup.closeSoon() }
 
         controls.onPlayPause = { [weak self] in self?.togglePlay() }
         controls.onMute = { [weak self] in self?.toggleMute() }
+        controls.onSkip = { [weak self] seconds in self?.seek(by: seconds) }
+        controls.onSpeedButton = { [weak self] in self?.toggleSpeeds() }
+        controls.muteButton.onHover = { [weak self] inside in
+            guard let self else { return }
+            if inside { self.openPopup(self.volumePopup) } else { self.volumePopup.closeSoon() }
+        }
+        controls.speedButton.onHover = { [weak self] inside in
+            guard let self else { return }
+            if inside { self.openPopup(self.speedPopup) } else { self.speedPopup.closeSoon() }
+        }
         controls.onScrub = { [weak self] seconds, isFinal in self?.scrub(to: seconds, isFinal: isFinal) }
         controls.onHover = { [weak self] hover in self?.hover(hover) }
     }
@@ -103,9 +147,11 @@ final class ViewerVideo {
     private func attach(_ playback: any VideoPlayback) {
         self.playback = playback
         playback.isMuted = isMuted
+        playback.volume = volume
         let layer = playback.layer
         layer.isHidden = true
         layer.frame = frame
+        layer.backgroundColor = backdropColor
         if let below, let parent = below.superlayer {
             parent.insertSublayer(layer, above: below)
         }
@@ -126,6 +172,7 @@ final class ViewerVideo {
         problem = nil
         startsAt = nil
         autoplays = false
+        clickUndo = nil
         preview.hide()
         setControlsVisible(false, animated: false)
     }
@@ -143,7 +190,7 @@ final class ViewerVideo {
             }
             if autoplays {
                 autoplays = false
-                playback.play(rate: 1)
+                playback.play(rate: speed)
             }
             lastTime = playback.currentTime
             if !controlsVisible, !playback.layer.isHidden || playback.isShowingFrame { revealControls() }
@@ -161,8 +208,10 @@ final class ViewerVideo {
         }
         if playback.status != .ready { setControlsVisible(false, animated: true) }
         controls.update(
-            time: playback.currentTime, duration: playback.duration, isPlaying: playback.rate != 0,
-            isMuted: playback.isMuted)
+            time: playback.currentTime, duration: playback.duration, rate: playback.rate, speed: speed,
+            isMuted: playback.isMuted, volume: volume)
+        volumePanel.update(level: isMuted ? 0 : volume)
+        speedPanel.update(speed: speed)
         onChange?()
     }
 
@@ -179,7 +228,7 @@ final class ViewerVideo {
     }
 
     func layoutControls(in bounds: CGRect) {
-        let width = min(bounds.width - 40, 640)
+        let width = min(bounds.width - 40, 760)
         controls.frame = CGRect(
             x: (bounds.width - width) / 2, y: bounds.height - VideoControlsView.height - 20, width: max(0, width),
             height: VideoControlsView.height)
@@ -194,9 +243,48 @@ final class ViewerVideo {
             playback.pause()
             setControlsVisible(true, animated: true)
         } else {
-            playback.play(rate: 1)
+            playback.play(rate: speed)
             scheduleHide()
         }
+    }
+
+    /// A click on the video. It acts at once, rather than waiting out the double-click interval, and
+    /// remembers enough for `undoClick` to put it back.
+    func click() {
+        guard let playback, playback.status == .ready else { return }
+        clickUndo = (playback.currentTime, playback.rate != 0)
+        togglePlay()
+    }
+
+    /// The second click of a double click: back to playing or paused, at the exact time of the first,
+    /// so a double click leaves no trace but the moment it played or paused.
+    func undoClick() {
+        guard let undo = clickUndo, let playback, playback.status == .ready else { return }
+        clickUndo = nil
+        if undo.wasPlaying {
+            playback.play(rate: speed)
+            scheduleHide()
+        } else {
+            playback.pause()
+            setControlsVisible(true, animated: true)
+        }
+        playback.seek(to: undo.time, exact: true)
+    }
+
+    /// The speed menu, and `=`. Applies at once to a video playing forward.
+    func setSpeed(_ speed: Float) {
+        self.speed = speed
+        if let playback, playback.status == .ready, playback.rate > 0 { playback.play(rate: speed) }
+        playbackChanged()
+        revealControls()
+    }
+
+    /// `[` and `]`: the next speed down or up the menu's list.
+    func stepSpeed(faster: Bool) {
+        let speeds = Self.speeds
+        let next = faster ? speeds.first { $0 > speed } : speeds.last { $0 < speed }
+        guard let next else { return }
+        setSpeed(next)
     }
 
     /// J and L. Each press in the same direction doubles the speed, up to 8×, as in editing apps.
@@ -232,12 +320,41 @@ final class ViewerVideo {
         setControlsVisible(true, animated: true)
     }
 
-    /// M.
+    /// M and the speaker. Unmuting a volume dragged to nothing brings it back to full.
     func toggleMute() {
         isMuted.toggle()
+        if !isMuted, volume == 0 { volume = 1 }
+        playback?.isMuted = isMuted
+        playback?.volume = volume
+        playbackChanged()
+        revealControls()
+    }
+
+    /// The volume slider. Dragging to nothing mutes, and up from there unmutes.
+    func setVolume(_ level: Float) {
+        volume = min(max(level, 0), 1)
+        isMuted = volume == 0
+        playback?.volume = volume
         playback?.isMuted = isMuted
         playbackChanged()
         revealControls()
+    }
+
+    // MARK: Volume and speed panels
+
+    /// A click on the speed button opens the speeds too, for VoiceOver and for when the pointer
+    /// came to rest on it while the bar was hidden.
+    func toggleSpeeds() {
+        volumePopup.close()
+        openPopup(speedPopup)
+    }
+
+    private func openPopup(_ popup: BarPopup) {
+        guard controlsVisible, playback?.status == .ready else { return }
+        let other = popup === volumePopup ? speedPopup : volumePopup
+        other.close()
+        hideTask?.cancel()
+        popup.open(barTop: controls.frame.minY)
     }
 
     // MARK: Scrubbing
@@ -251,7 +368,7 @@ final class ViewerVideo {
         // Keyframes while dragging, so it keeps up. The exact frame when the button comes up.
         playback.seek(to: seconds, exact: isFinal)
         if isFinal {
-            if wasPlayingBeforeScrub { playback.play(rate: 1) }
+            if wasPlayingBeforeScrub { playback.play(rate: speed) }
             wasPlayingBeforeScrub = false
             scheduleHide()
         }
@@ -297,7 +414,9 @@ final class ViewerVideo {
         hideTask = Task { [weak self] in
             try? await Task.sleep(for: Self.hideDelay)
             guard !Task.isCancelled, let self else { return }
-            guard self.isPlaying, !self.controls.isInUse, !self.isPointerOverControls else { return }
+            guard self.isPlaying, !self.controls.isInUse, !self.isPointerOverControls,
+                !self.volumePopup.isOpen, !self.speedPopup.isOpen
+            else { return }
             self.setControlsVisible(false, animated: true)
             self.preview.hide()
         }
@@ -312,6 +431,10 @@ final class ViewerVideo {
     private func setControlsVisible(_ visible: Bool, animated: Bool) {
         guard visible != controlsVisible else { return }
         controlsVisible = visible
+        if !visible {
+            volumePopup.close()
+            speedPopup.close()
+        }
         if visible { controls.isHidden = false }
         guard animated else {
             controls.alphaValue = visible ? 1 : 0

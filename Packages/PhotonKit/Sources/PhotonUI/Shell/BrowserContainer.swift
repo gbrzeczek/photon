@@ -8,6 +8,7 @@ final class BrowserContainerView: NSView {
     let grid: TileGridView
     let list: BrowserListView
     let viewer: ViewerView
+    let jumps = ScrollJumpOverlay()
     private let model: BrowserModel
     private let commands: BrowserCommandResponder
     private var hasLaidOut = false
@@ -30,7 +31,19 @@ final class BrowserContainerView: NSView {
         viewer.autoresizingMask = [.width, .height]
         addSubview(grid)
         addSubview(list)
+        jumps.autoresizingMask = [.width, .height]
+        addSubview(jumps)
         addSubview(viewer)
+        jumps.onJump = { [weak model] bottom in model?.scrollToEdge(bottom: bottom) }
+        jumps.onBack = { [weak model] in model?.goBack() }
+        jumps.onBackExpired = { [weak model] in model?.forgetPlace() }
+        model.onBackPlaceChange = { [weak self] canGoBack in self?.jumps.showBack(canGoBack) }
+        for scrollView in [grid.scrollView, list.scrollView] {
+            scrollView.contentView.postsBoundsChangedNotifications = true
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(contentScrolled(_:)), name: NSView.boundsDidChangeNotification,
+                object: scrollView.contentView)
+        }
         viewer.host = model
         model.viewer = viewer
         model.attach(grid: grid, list: list) { [weak self] in self?.show($0) }
@@ -59,7 +72,18 @@ final class BrowserContainerView: NSView {
         DispatchQueue.main.async { [model] in model.contentDidLayOut() }
     }
 
+    /// Costs a comparison per scroll, never anything that grows with the library.
+    @objc private func contentScrolled(_ notification: Notification) {
+        guard let clip = notification.object as? NSClipView else { return }
+        let scrollView = model.viewMode == .tiles ? grid.scrollView : list.scrollView
+        guard clip === scrollView.contentView, !model.isViewerOpen else { return }
+        jumps.scrolled(
+            top: clip.bounds.minY, height: clip.bounds.height, content: scrollView.documentView?.frame.height ?? 0)
+    }
+
     func show(_ mode: BrowserViewMode) {
+        jumps.hideAll()
+        model.forgetPlace()
         grid.isHidden = mode != .tiles
         list.isHidden = mode != .list
         if mode == .list { list.didBecomeVisible() }

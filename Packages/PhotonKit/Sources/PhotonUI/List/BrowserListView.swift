@@ -296,6 +296,17 @@ final class BrowserListView: NSView, BrowserContent, NSTableViewDataSource, NSTa
         requestTick()
     }
 
+    func scrollToEdge(bottom: Bool) {
+        guard result.count > 0 else { return }
+        table.scrollRowToVisible(bottom ? result.count - 1 : 0)
+    }
+
+    func scroll(to anchor: ViewAnchor) {
+        guard anchor.row < result.count else { return }
+        let top = table.rect(ofRow: anchor.row).midY - anchor.screenY
+        table.scroll(CGPoint(x: 0, y: max(0, top)))
+    }
+
     func row(after move: BrowserMove, from row: Int) -> Int? {
         let count = result.count
         guard count > 0 else { return nil }

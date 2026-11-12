@@ -27,6 +27,8 @@ public protocol VideoPlayback: AnyObject {
     /// Zero when paused, negative when playing backward.
     var rate: Float { get }
     var isMuted: Bool { get set }
+    /// From 0 to 1, apart from muting.
+    var volume: Float { get set }
     var canPlayBackward: Bool { get }
     /// Fills the layer's bounds, cropping, as a square tile does. Otherwise the whole picture fits.
     var fillsBounds: Bool { get set }

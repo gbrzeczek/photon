@@ -175,6 +175,7 @@ private struct BrowserShell: View {
             Button("Inspector", systemImage: "info.circle") { model.toggleInspector() }
                 .help("Show or hide the inspector")
         }
+        ToolbarItem { FullScreenButton() }
     }
 
     private func chooseFolder() {
@@ -281,6 +282,62 @@ private struct SizeControl: View {
             .frame(width: 120)
             .accessibilityLabel("Tile size")
             .help("Tile size")
+        }
+    }
+}
+
+/// Enters or leaves full screen, the same as Ctrl-Cmd-F and the window's green button. Its own view,
+/// so that the window's state doesn't rebuild the toolbar.
+private struct FullScreenButton: View {
+    @State private var window: NSWindow?
+    @State private var isFullScreen = false
+
+    var body: some View {
+        Button(
+            isFullScreen ? "Exit Full Screen" : "Enter Full Screen",
+            systemImage: isFullScreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"
+        ) {
+            window?.toggleFullScreen(nil)
+        }
+        .help(isFullScreen ? "Exit full screen" : "Enter full screen")
+        .background(WindowReader(window: $window))
+        .onChange(of: window) { refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { _ in
+            refresh()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { _ in
+            refresh()
+        }
+    }
+
+    /// Read from the window itself, rather than from which notification came, so it can't drift.
+    private func refresh() { isFullScreen = window?.styleMask.contains(.fullScreen) == true }
+}
+
+/// The window a view is in. In full screen, the toolbar moves into a window of its own, which can't
+/// become main, so only a window that can is reported: that's the one full screen applies to.
+private struct WindowReader: NSViewRepresentable {
+    @Binding var window: NSWindow?
+
+    func makeNSView(context: Context) -> NSView { Probe { [binding = $window] in binding.wrappedValue = $0 } }
+    func updateNSView(_ view: NSView, context: Context) {}
+
+    private final class Probe: NSView {
+        private let found: (NSWindow?) -> Void
+
+        init(found: @escaping (NSWindow?) -> Void) {
+            self.found = found
+            super.init(frame: .zero)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError("Not used.") }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let window, window.canBecomeMain else { return }
+            // Not during the view update that moved it.
+            DispatchQueue.main.async { [found] in found(window) }
         }
     }
 }

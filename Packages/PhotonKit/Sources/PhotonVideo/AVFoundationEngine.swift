@@ -37,6 +37,8 @@ final class AVFoundationPlayback: VideoPlayback {
         loader = ScheduledResourceLoader(source: source, priority: .visible)
         asset = loader.makeAsset()
         item = AVPlayerItem(asset: asset)
+        // Keeps voices at their own pitch at other speeds.
+        item.audioTimePitchAlgorithm = .spectral
         player = AVPlayer(playerItem: item)
         // Nothing here is a document the system should resume, and a video in a photo browser shouldn't
         // take over the Now Playing controls.
@@ -44,7 +46,10 @@ final class AVFoundationPlayback: VideoPlayback {
         player.actionAtItemEnd = .pause
         playerLayer = AVPlayerLayer(player: player)
         playerLayer.videoGravity = .resizeAspect
-        playerLayer.actions = ["bounds": NSNull(), "position": NSNull(), "contents": NSNull(), "opacity": NSNull()]
+        playerLayer.actions = [
+            "bounds": NSNull(), "position": NSNull(), "contents": NSNull(), "opacity": NSNull(),
+            "backgroundColor": NSNull(),
+        ]
         observe()
     }
 
@@ -58,6 +63,10 @@ final class AVFoundationPlayback: VideoPlayback {
     var isMuted: Bool {
         get { player.isMuted }
         set { player.isMuted = newValue }
+    }
+    var volume: Float {
+        get { player.volume }
+        set { player.volume = min(max(newValue, 0), 1) }
     }
     var fillsBounds: Bool {
         get { playerLayer.videoGravity == .resizeAspectFill }

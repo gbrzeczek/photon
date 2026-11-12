@@ -160,6 +160,9 @@ struct VideoViewerTests {
         let video = browser.video
         browser.press("m", code: 46)
         #expect(video.isMuted)
+        // Edges the video's own aspect leaves inside the frame are the backdrop, not the thumbnail.
+        #expect(video.playback?.layer.backgroundColor != nil)
+        #expect(video.playback?.layer.backgroundColor == video.backdropColor)
 
         browser.pressSpace()
         #expect(browser.model.isViewerOpen)
@@ -190,6 +193,139 @@ struct VideoViewerTests {
         browser.viewer.finishTransitionForTesting()
         #expect(!browser.model.isViewerOpen)
         #expect(browser.video.playback == nil)
+    }
+
+    @Test("Speed keys and the menu set what Space plays at, volume carries, and skipping seeks")
+    func speedVolumeSkip() async throws {
+        let browser = try await makeBrowser()
+        defer { browser.tearDown() }
+        browser.model.select(row: 1)
+        browser.model.openViewer()
+        #expect(try await until { browser.video.status == .ready })
+        let video = browser.video
+        browser.press("m", code: 46)
+
+        browser.press("]", code: 30)
+        #expect(video.speed == 1.25)
+        browser.press("[", code: 33)
+        browser.press("[", code: 33)
+        #expect(video.speed == 0.75)
+        browser.pressSpace()
+        #expect(video.playback?.rate == 0.75)
+        // A speed chosen while playing applies at once.
+        video.setSpeed(2)
+        #expect(video.playback?.rate == 2)
+        browser.press("=", code: 24)
+        #expect(video.speed == 1)
+        #expect(video.playback?.rate == 1)
+        // J and L shuttle apart from it, and Space comes back to it.
+        browser.press("l", code: 37)
+        #expect(video.playback?.rate == 2)
+        browser.press("k", code: 40)
+        browser.pressSpace()
+        #expect(video.playback?.rate == 1)
+        browser.press("k", code: 40)
+        #expect(VideoControlsView.format(rate: 0.75) == "0.75×")
+        #expect(VideoControlsView.format(rate: -2) == "−2×")
+
+        // A volume dragged to nothing mutes, up from there unmutes, and unmuting at nothing restores it.
+        video.setVolume(0.4)
+        #expect(!video.isMuted)
+        #expect(video.playback?.volume == 0.4)
+        video.setVolume(0)
+        #expect(video.isMuted)
+        video.toggleMute()
+        #expect(!video.isMuted)
+        #expect(video.volume == 1)
+        video.setVolume(0.3)
+        video.toggleMute()
+
+        // The skip buttons go as far as Shift-arrows.
+        video.seek(by: VideoControlsView.skipSeconds)
+        #expect(try await until { (video.playback?.currentTime ?? 0) > 2.5 })
+        video.seek(by: -VideoControlsView.skipSeconds)
+        #expect(try await until { (video.playback?.currentTime ?? 9) < 0.5 })
+
+        // Speed, volume and mute carry to the next video.
+        video.setSpeed(1.5)
+        browser.pressRight()
+        #expect(try await until { browser.video.status == .ready })
+        #expect(video.speed == 1.5)
+        #expect(video.isMuted)
+        #expect(video.playback?.volume == 0.3)
+        #expect(video.playback?.isMuted == true)
+    }
+
+    @Test("A click plays at once, and a double click's second click puts back the state and the frame")
+    func doubleClick() async throws {
+        let browser = try await makeBrowser()
+        defer { browser.tearDown() }
+        browser.model.select(row: 1)
+        browser.model.openViewer()
+        #expect(try await until { browser.video.status == .ready })
+        let video = browser.video
+        browser.press("m", code: 46)
+        video.seek(by: 1)
+        #expect(try await until { abs((video.playback?.currentTime ?? 0) - 1) < 0.05 })
+
+        // Paused: the first click plays, and the second pauses again at the frame it started from.
+        video.click()
+        #expect(video.isPlaying)
+        try await Task.sleep(for: .milliseconds(300))
+        video.undoClick()
+        #expect(!video.isPlaying)
+        #expect(try await until { abs((video.playback?.currentTime ?? 0) - 1) < 0.01 })
+
+        // Playing: the first click pauses, and the second plays on.
+        video.togglePlay()
+        video.click()
+        #expect(!video.isPlaying)
+        video.undoClick()
+        #expect(video.isPlaying)
+        // Only once.
+        video.undoClick()
+        #expect(video.isPlaying)
+        video.pause()
+    }
+
+    @Test("Volume and speed open as vertical panels above the bar, which doesn't move, and the speed snaps")
+    func panels() async throws {
+        let browser = try await makeBrowser()
+        defer { browser.tearDown() }
+        browser.model.select(row: 1)
+        browser.model.openViewer()
+        #expect(try await until { browser.video.status == .ready })
+        let video = browser.video
+        // 1× sits in the middle of the speed slider.
+        #expect(ViewerVideo.speeds.count % 2 == 1)
+        #expect(ViewerVideo.speeds[ViewerVideo.speeds.count / 2] == 1)
+        browser.press("m", code: 46)
+        video.pointerMoved()
+        #expect(try await until { video.areControlsVisibleForTesting })
+        let bar = video.controls.frame
+
+        video.controls.muteButton.onHover?(true)
+        #expect(video.volumePopup.isOpen)
+        #expect(video.volumePopup.frame.maxY < bar.minY)
+        #expect(video.controls.frame == bar)
+        video.volumePanel.slider.doubleValue = 0.5
+        video.volumePanel.onChange?(0.5)
+        #expect(video.volume == 0.5 && !video.isMuted)
+
+        // Opening one closes the other.
+        video.controls.speedButton.onHover?(true)
+        #expect(video.speedPopup.isOpen)
+        #expect(!video.volumePopup.isOpen)
+        #expect(video.controls.frame == bar)
+        video.speedPanel.setForTesting(index: 4)
+        #expect(video.speed == ViewerVideo.speeds[4])
+        // A key moves the slider too.
+        browser.press("=", code: 24)
+        #expect(video.speedPanel.slider.doubleValue == Double(ViewerVideo.speeds.firstIndex(of: 1)!))
+
+        video.pause()
+        video.stop()
+        #expect(!video.speedPopup.isOpen)
     }
 
     @Test("A held arrow key opens no player for the videos it passes")

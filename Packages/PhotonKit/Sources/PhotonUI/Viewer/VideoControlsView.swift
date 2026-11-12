@@ -1,17 +1,26 @@
 import AppKit
 
-/// The transport bar over a playing video: play and pause, the time, a scrubber and mute, on Liquid
-/// Glass. None of it takes focus, so the viewer keeps the keyboard, and every control has a key.
+/// The transport bar over a playing video: play and pause, skipping, the time, a scrubber, speed, volume
+/// and full screen, on Liquid Glass. None of it takes focus, so the viewer keeps the keyboard, and every
+/// control has a key.
 @MainActor
 final class VideoControlsView: NSView {
     private let glass = NSGlassEffectView()
     private let playButton = NSButton()
-    private let muteButton = NSButton()
+    private let backButton = NSButton()
+    private let forwardButton = NSButton()
+    let speedButton = HoverButton()
+    let muteButton = HoverButton()
+    private let fullScreenButton = NSButton()
     private let elapsed = NSTextField(labelWithString: "0:00")
     private let remaining = NSTextField(labelWithString: "-0:00")
     let scrubber = ScrubberSlider()
 
     var onPlayPause: (() -> Void)?
+    /// Seconds to skip, negative for back.
+    var onSkip: ((Double) -> Void)?
+    /// The speed button was clicked, which opens the speeds above it.
+    var onSpeedButton: (() -> Void)?
     var onMute: (() -> Void)?
     /// A position chosen on the scrubber, in seconds. `isFinal` when the button comes up.
     var onScrub: ((Double, _ isFinal: Bool) -> Void)?
@@ -20,7 +29,11 @@ final class VideoControlsView: NSView {
     var onHover: ((Double, CGFloat)?) -> Void = { _ in }
 
     private var duration: Double = 0
+    private var shownSpeaker = ""
+    private var fullScreenObservers: [any NSObjectProtocol] = []
     static let height: CGFloat = 44
+    /// How far the skip buttons go, the same as Shift-Left and Shift-Right.
+    static let skipSeconds: Double = 5
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -29,10 +42,30 @@ final class VideoControlsView: NSView {
         glass.contentView = content
         addSubview(glass)
 
-        configure(playButton, symbol: "play.fill", label: "Play")
+        Self.configure(playButton, symbol: "play.fill", label: "Play", target: self)
         playButton.action = #selector(playPause)
-        configure(muteButton, symbol: "speaker.wave.2.fill", label: "Mute")
+        Self.configure(backButton, symbol: "gobackward.5", label: "Back 5 Seconds", target: self)
+        backButton.action = #selector(skipBack)
+        Self.configure(forwardButton, symbol: "goforward.5", label: "Forward 5 Seconds", target: self)
+        forwardButton.action = #selector(skipForward)
+        Self.configure(fullScreenButton, symbol: "arrow.up.left.and.arrow.down.right", label: "Enter Full Screen", target: self)
+        fullScreenButton.action = #selector(toggleFullScreen)
+
+        speedButton.isBordered = false
+        speedButton.bezelStyle = .regularSquare
+        speedButton.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
+        speedButton.contentTintColor = .labelColor
+        speedButton.refusesFirstResponder = true
+        speedButton.target = self
+        speedButton.action = #selector(speedClicked)
+        speedButton.title = Self.format(rate: 1)
+        speedButton.setAccessibilityLabel("Playback Speed")
+        speedButton.toolTip = "Playback speed"
+        speedButton.widthAnchor.constraint(equalToConstant: 40).isActive = true
+
+        Self.configure(muteButton, symbol: "speaker.wave.3.fill", label: "Mute", target: self)
         muteButton.action = #selector(mute)
+
         for label in [elapsed, remaining] {
             label.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
             label.textColor = .secondaryLabelColor
@@ -50,9 +83,13 @@ final class VideoControlsView: NSView {
         scrubber.onHover = { [weak self] fraction in self?.hovered(fraction) }
         scrubber.onEnd = { [weak self] in self?.scrubEnded() }
 
-        let stack = NSStackView(views: [playButton, elapsed, scrubber, remaining, muteButton])
+        let stack = NSStackView(views: [
+            backButton, playButton, forwardButton, elapsed, scrubber, remaining, speedButton, muteButton, fullScreenButton,
+        ])
         stack.orientation = .horizontal
-        stack.spacing = 8
+        stack.spacing = 6
+        stack.setCustomSpacing(10, after: forwardButton)
+        stack.setCustomSpacing(10, after: remaining)
         stack.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
         stack.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(stack)
@@ -64,6 +101,7 @@ final class VideoControlsView: NSView {
             remaining.widthAnchor.constraint(greaterThanOrEqualToConstant: 48),
         ])
         scrubber.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        scrubber.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         setAccessibilityLabel("Video controls")
@@ -78,19 +116,24 @@ final class VideoControlsView: NSView {
         glass.frame = bounds
     }
 
-    private func configure(_ button: NSButton, symbol: String, label: String) {
+    static func configure(_ button: NSButton, symbol: String, label: String, target: AnyObject) {
         button.isBordered = false
         button.bezelStyle = .regularSquare
+        button.title = ""
+        button.imagePosition = .imageOnly
         button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
         button.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 15, weight: .medium)
         button.contentTintColor = .labelColor
         button.refusesFirstResponder = true
-        button.target = self
+        button.target = target
         button.setAccessibilityLabel(label)
+        button.toolTip = label
         button.widthAnchor.constraint(equalToConstant: 28).isActive = true
     }
 
-    func update(time: Double, duration: Double, isPlaying: Bool, isMuted: Bool) {
+    /// `rate` is what's playing, and `speed` what Space plays at, which the button shows unless J or L
+    /// chose another.
+    func update(time: Double, duration: Double, rate: Float, speed: Float, isMuted: Bool, volume level: Float) {
         self.duration = duration
         if !scrubber.isTracking { scrubber.doubleValue = duration > 0 ? time / duration : 0 }
         let shown = scrubber.isTracking ? scrubber.doubleValue * duration : time
@@ -100,23 +143,83 @@ final class VideoControlsView: NSView {
         if remaining.stringValue != remainingText { remaining.stringValue = remainingText }
         scrubber.setAccessibilityValue("\(elapsedText) of \(TileArtwork.format(Int(duration.rounded())))")
 
-        let play = isPlaying ? "pause.fill" : "play.fill"
+        let isPlaying = rate != 0
         if playButton.accessibilityLabel() != (isPlaying ? "Pause" : "Play") {
+            let play = isPlaying ? "pause.fill" : "play.fill"
             playButton.image = NSImage(systemSymbolName: play, accessibilityDescription: isPlaying ? "Pause" : "Play")
             playButton.setAccessibilityLabel(isPlaying ? "Pause" : "Play")
+            playButton.toolTip = isPlaying ? "Pause" : "Play"
         }
-        let speaker = isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill"
-        if muteButton.accessibilityLabel() != (isMuted ? "Unmute" : "Mute") {
-            muteButton.image = NSImage(systemSymbolName: speaker, accessibilityDescription: isMuted ? "Unmute" : "Mute")
-            muteButton.setAccessibilityLabel(isMuted ? "Unmute" : "Mute")
+        let speedText = Self.format(rate: isPlaying ? rate : speed)
+        if speedButton.title != speedText {
+            speedButton.title = speedText
+            speedButton.setAccessibilityValue(speedText)
         }
+        updateSpeaker(level: isMuted ? 0 : level)
+        updateFullScreen()
     }
 
-    /// Whether a scrub or a click is under way, so that the bar stays up.
+    /// 1×, 0.5×, 1.25×, −2×.
+    static func format(rate: Float) -> String {
+        let magnitude = abs(rate)
+        let number = magnitude == magnitude.rounded() ? String(Int(magnitude)) : String(format: "%g", magnitude)
+        return (rate < 0 ? "−" : "") + number + "×"
+    }
+
+    /// The speaker shows how loud, and a muted one is crossed out.
+    private func updateSpeaker(level: Float) {
+        let symbol = switch level {
+        case 0: "speaker.slash.fill"
+        case ..<0.34: "speaker.wave.1.fill"
+        case ..<0.67: "speaker.wave.2.fill"
+        default: "speaker.wave.3.fill"
+        }
+        guard symbol != shownSpeaker else { return }
+        shownSpeaker = symbol
+        let label = level == 0 ? "Unmute" : "Mute"
+        muteButton.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+        muteButton.setAccessibilityLabel(label)
+        muteButton.toolTip = label
+    }
+
+    /// Whether a scrub is under way, so that the bar stays up.
     var isInUse: Bool { scrubber.isTracking }
 
     @objc private func playPause() { onPlayPause?() }
+    @objc private func skipBack() { onSkip?(-Self.skipSeconds) }
+    @objc private func skipForward() { onSkip?(Self.skipSeconds) }
     @objc private func mute() { onMute?() }
+    @objc private func speedClicked() { onSpeedButton?() }
+
+    // MARK: Full screen
+
+    @objc private func toggleFullScreen() { window?.toggleFullScreen(nil) }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        for observer in fullScreenObservers { NotificationCenter.default.removeObserver(observer) }
+        fullScreenObservers = []
+        guard let window else { return }
+        for name in [NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification] {
+            fullScreenObservers.append(
+                NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.updateFullScreen() }
+                })
+        }
+        updateFullScreen()
+    }
+
+    private func updateFullScreen() {
+        let isFullScreen = window?.styleMask.contains(.fullScreen) == true
+        let label = isFullScreen ? "Exit Full Screen" : "Enter Full Screen"
+        guard fullScreenButton.accessibilityLabel() != label else { return }
+        let symbol = isFullScreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"
+        fullScreenButton.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+        fullScreenButton.setAccessibilityLabel(label)
+        fullScreenButton.toolTip = label
+    }
+
+    // MARK: Scrubbing
 
     /// During a drag, and for VoiceOver's increments, which arrive with no drag and are final at once.
     @objc private func scrubbed() {
@@ -144,13 +247,26 @@ final class VideoControlsView: NSView {
     }
 }
 
-/// A slider that also says where the pointer is over it, for scrub previews.
+/// A slider that says when it's being dragged.
 @MainActor
-final class ScrubberSlider: NSSlider {
-    var onHover: ((Double?) -> Void)?
+class TrackingSlider: NSSlider {
     /// The button came up after a click or a drag.
     var onEnd: (() -> Void)?
     private(set) var isTracking = false
+
+    override func mouseDown(with event: NSEvent) {
+        isTracking = true
+        // NSSlider tracks until the button comes up, and returns then.
+        super.mouseDown(with: event)
+        isTracking = false
+        onEnd?()
+    }
+}
+
+/// A slider that also says where the pointer is over it, for scrub previews.
+@MainActor
+final class ScrubberSlider: TrackingSlider {
+    var onHover: ((Double?) -> Void)?
     private var trackingArea: NSTrackingArea?
 
     override func updateTrackingAreas() {
@@ -161,14 +277,6 @@ final class ScrubberSlider: NSSlider {
             owner: self)
         addTrackingArea(area)
         trackingArea = area
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        isTracking = true
-        // NSSlider tracks until the button comes up, and returns then.
-        super.mouseDown(with: event)
-        isTracking = false
-        onEnd?()
     }
 
     override func mouseMoved(with event: NSEvent) {

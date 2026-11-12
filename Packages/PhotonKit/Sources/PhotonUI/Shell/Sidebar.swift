@@ -40,17 +40,15 @@ struct LibrarySidebar: View {
                 }
             }
             Section("Folders") {
-                OutlineGroup(roots, children: \.children) { node in
-                    row(node)
-                        .tag(BrowseSource.folder(node.scope))
-                        .foregroundStyle(isOnline(node) ? .primary : .secondary)
-                        .contextMenu {
-                            if canEject(node) { Button(ejectTitle(node)) { library.eject(node.scope.volume) } }
-                        }
-                }
+                // Not an OutlineGroup, whose expansion can't be read or set, so the tree can be saved.
+                ForEach(roots) { folder($0) }
             }
         }
         .listStyle(.sidebar)
+        // The folder showing is always in sight, after a launch too, whatever was closed above it.
+        .onChange(of: model.source, initial: true) { _, source in
+            if case .folder(let scope) = source { library.revealInTree(scope) }
+        }
         .accessibilityIdentifier("photon.sidebar")
     }
 
@@ -93,9 +91,40 @@ struct LibrarySidebar: View {
         }
     }
 
+    /// A folder, and below it its own folders while it's open. Closed folders build no children.
+    private func folder(_ node: FolderNode) -> AnyView {
+        let label = row(node)
+            .tag(BrowseSource.folder(node.scope))
+            .foregroundStyle(isOnline(node) ? .primary : .secondary)
+            .help(tooltip(node))
+            .contextMenu {
+                if canEject(node) { Button(ejectTitle(node)) { library.eject(node.scope.volume) } }
+            }
+        guard let children = node.children, !children.isEmpty else { return AnyView(label) }
+        let expanded = Binding(
+            get: { library.expandedFolders.contains(node.scope) },
+            set: { library.setFolder(node.scope, expanded: $0) })
+        return AnyView(
+            DisclosureGroup(isExpanded: expanded) {
+                if expanded.wrappedValue { ForEach(children) { folder($0) } }
+            } label: {
+                label
+            })
+    }
+
+    /// The whole name, which a narrow sidebar cuts short, and where the folder is, to tell apart
+    /// folders with similar names.
+    private func tooltip(_ node: FolderNode) -> String {
+        let volume = library.name(of: node.scope.volume)
+        let path = node.scope.path.isEmpty ? volume : "\(volume) › " + node.scope.path.split(separator: "/").joined(separator: " › ")
+        return "\(node.name)\n\(path)"
+    }
+
     private func row(_ node: FolderNode) -> some View {
         HStack {
             Label(node.name, systemImage: isOnline(node) ? "folder" : "externaldrive.badge.xmark")
+                .lineLimit(1)
+                .truncationMode(.middle)
             Spacer()
             if canEject(node) {
                 Button(ejectTitle(node), systemImage: "eject.fill") { library.eject(node.scope.volume) }
