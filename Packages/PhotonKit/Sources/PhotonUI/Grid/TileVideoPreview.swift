@@ -83,23 +83,39 @@ final class TileVideoPreview {
     }
 
     private func changed() {
-        guard let playback, !hasStarted else { return }
+        guard let playback else { return }
         switch playback.status {
         case .loading:
             return
         case .unavailable, .unsupported:
             stop()
         case .ready:
-            hasStarted = true
-            playback.seek(to: VideoPoster.time(duration: playback.duration), exact: false) { [weak self] finished in
-                guard finished, let self, let playback = self.playback else { return }
-                CATransaction.begin()
-                CATransaction.setDisableActions(true)
-                playback.layer.isHidden = false
-                CATransaction.commit()
-                playback.play(rate: 1)
+            if !hasStarted {
+                hasStarted = true
+                playback.seek(to: VideoPoster.time(duration: playback.duration), exact: false) { [weak self] finished in
+                    guard finished, let self, let playback = self.playback else { return }
+                    self.landedAt = playback.currentTime
+                    playback.play(rate: 1)
+                }
             }
+            revealIfShowingNewFrame()
         }
+    }
+
+    /// Where the seek to the poster frame landed, once it has.
+    private var landedAt: Double?
+
+    /// A finished seek doesn't mean its frame is on screen: the layer can still be empty, which draws
+    /// black, or showing the first frame, which often is black. So the layer stays hidden over the
+    /// thumbnail until a frame is ready and playback has moved past where the seek landed.
+    private func revealIfShowingNewFrame() {
+        guard let playback, playback.layer.isHidden, let landedAt, playback.isShowingFrame,
+            playback.rate != 0, playback.currentTime != landedAt
+        else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        playback.layer.isHidden = false
+        CATransaction.commit()
     }
 
     /// The tile moved, so the layer follows. Tiles change size only on zoom, which stops the preview,
@@ -136,15 +152,18 @@ final class TileVideoPreview {
         startTask?.cancel()
         startTask = nil
         if let playback {
-            playback.close()
+            // Off the tile before the player lets go of it, so an emptied layer never shows.
             CATransaction.begin()
             CATransaction.setDisableActions(true)
+            playback.layer.isHidden = true
             playback.layer.removeFromSuperlayer()
             CATransaction.commit()
+            playback.close()
         }
         playback = nil
         asset = nil
         tile = nil
         hasStarted = false
+        landedAt = nil
     }
 }
