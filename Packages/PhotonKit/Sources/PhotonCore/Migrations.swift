@@ -3,7 +3,7 @@ internal import GRDB
 /// Schema migrations. Migrations that have shipped are immutable, because user libraries must survive
 /// upgrades: to change the schema, add a new one. `SchemaSnapshotTests` fails if an old one is edited.
 enum LibraryMigrations {
-    static let current = "v4"
+    static let current = "v5"
 
     static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
@@ -11,6 +11,7 @@ enum LibraryMigrations {
         migrator.registerMigration("v2") { db in try db.execute(sql: v2) }
         migrator.registerMigration("v3") { db in try db.execute(sql: v3) }
         migrator.registerMigration("v4") { db in try db.execute(sql: v4) }
+        migrator.registerMigration("v5") { db in try db.execute(sql: v5) }
         return migrator
     }
 
@@ -211,5 +212,14 @@ enum LibraryMigrations {
 
         CREATE INDEX stacks_cover ON stacks(cover_asset_id);
         CREATE INDEX albums_name ON albums(name COLLATE NOCASE);
+        """
+
+    /// Which folders are open in the sidebar's tree, so it comes back as it was left.
+    private static let v5 = """
+        CREATE TABLE expanded_folders (
+            volume_id INTEGER NOT NULL REFERENCES volumes(id) ON DELETE CASCADE,
+            relative_path TEXT NOT NULL,
+            PRIMARY KEY (volume_id, relative_path)
+        ) WITHOUT ROWID;
         """
 }

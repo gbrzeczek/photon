@@ -15,6 +15,8 @@ public final class BrowserLibrary {
     /// Manual and smart albums, by name, for the sidebar and the Add to Album menu.
     public private(set) var albums: [Album] = []
     public private(set) var tags: [Tag] = []
+    /// Folders open in the sidebar's tree, kept in the library so the tree comes back as it was.
+    public private(set) var expandedFolders: Set<BrowseScope> = []
     public private(set) var volumes: [VolumeSummary] = []
     public private(set) var onlineVolumes: Set<VolumeID> = []
     /// What can be done with each online volume's files. Anything not here is offline.
@@ -34,6 +36,7 @@ public final class BrowserLibrary {
     @ObservationIgnored let originals: OriginalReader
     @ObservationIgnored let pasteboard: MediaPasteboard
     @ObservationIgnored let videoEngines = VideoEngines.standard
+    @ObservationIgnored private var hasLoadedExpansion = false
     @ObservationIgnored private var packs: ThumbnailPackStore
     @ObservationIgnored private var monitor: VolumeEventMonitor?
     @ObservationIgnored private var backgroundTasks: [VolumeID: Task<Void, Never>] = [:]
@@ -235,6 +238,10 @@ public final class BrowserLibrary {
             if summaries != volumes { volumes = summaries }
             let found = try await store.folders()
             if found != folders { folders = found }
+            if !hasLoadedExpansion {
+                hasLoadedExpansion = true
+                expandedFolders = try await store.expandedFolders()
+            }
             await refreshOrganization()
         } catch {
             lastError = error.localizedDescription
@@ -247,6 +254,30 @@ public final class BrowserLibrary {
         if foundAlbums != albums { albums = foundAlbums }
         let foundTags = (try? await store.tags()) ?? tags
         if foundTags != tags { tags = foundTags }
+    }
+
+    /// Opens or closes a folder in the sidebar's tree. Shown at once, and saved behind it.
+    public func setFolder(_ scope: BrowseScope, expanded: Bool) {
+        guard expanded != expandedFolders.contains(scope) else { return }
+        if expanded { expandedFolders.insert(scope) } else { expandedFolders.remove(scope) }
+        let store = store
+        Task { try? await store.setFolder(scope, expanded: expanded) }
+    }
+
+    /// Opens the folders above `scope`, from its library root down, so the tree shows it. The folder
+    /// itself stays as it was.
+    public func revealInTree(_ scope: BrowseScope) {
+        let roots = folders.filter {
+            $0.isRoot && $0.volume == scope.volume
+                && ($0.path.isEmpty || scope.path == $0.path || scope.path.hasPrefix($0.path + "/"))
+        }
+        // The innermost, if one added folder is inside another.
+        guard let root = roots.max(by: { $0.path.count < $1.path.count }) else { return }
+        var path = root.path
+        for component in scope.path.dropFirst(root.path.count).split(separator: "/") {
+            setFolder(BrowseScope(volume: scope.volume, path: path), expanded: true)
+            path = path.isEmpty ? String(component) : path + "/" + component
+        }
     }
 
     /// Whether a source still exists. An offline folder is still in the library.

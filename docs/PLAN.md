@@ -140,7 +140,7 @@ Rules that follow from this:
 
 **Eject** is File → Eject, Command-E, the eject button on a root in the sidebar, or its context menu. It acts on the volume holding the folder showing, and ejects the whole disk, as Finder does. It stops all Photon's work on that disk first, and waits for handles to close, because an open handle blocks the unmount. If macOS refuses, usually because another app has a file open, nothing has changed, and the status bar says so.
 
-**Session restore.** A session stores the asset on screen and how far down it was, and the current item separately, because they can be far apart. That's a fraction of the viewport, so it doesn't depend on window size. Launch also reopens the viewer if it was open, with `PHOTON_NO_VIEWER_RESTORE` turning that off for tests. A session for a folder that has left the library falls back to the first folder. An offline folder is still in the library, so it stays.
+**Session restore.** A session stores the asset on screen and how far down it was, and the current item separately, because they can be far apart. That's a fraction of the viewport, so it doesn't depend on window size. Launch also reopens the viewer if it was open, with `PHOTON_NO_VIEWER_RESTORE` turning that off for tests. A session for a folder that has left the library falls back to the first folder. An offline folder is still in the library, so it stays. The sidebar's tree keeps which folders are open in `expanded_folders` (schema v5), by volume ID and relative path, and opening a folder opens the folders above it, so the one showing is always in sight after a launch. A folder's tooltip gives its whole name and where it is, and long names are cut in the middle, where similar names usually differ least.
 
 ### Indexing
 

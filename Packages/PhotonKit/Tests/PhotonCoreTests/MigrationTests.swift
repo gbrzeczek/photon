@@ -63,9 +63,51 @@ struct MigrationTests {
     }
 
     @Test("The v4 schema matches its snapshot")
-    func schemaSnapshotV4() async throws {
+    func schemaSnapshotV4() throws {
+        let queue = try DatabaseQueue()
+        try LibraryMigrations.migrator.migrate(queue, upTo: "v4")
+        let schema = try queue.read { try String.fetchAll($0, sql: Self.schemaSQL).joined(separator: ";\n\n") + ";\n" }
+        #expect(schema == (try snapshot("schema-v4")), "Add a migration instead of editing v4.")
+    }
+
+    @Test("The v5 schema matches its snapshot")
+    func schemaSnapshotV5() async throws {
         let store = try LibraryStore(url: temporaryURL())
-        #expect(try await schema(store) == (try snapshot("schema-v4")), "Add a migration instead of editing v4.")
+        #expect(try await schema(store) == (try snapshot("schema-v5")), "Add a migration instead of editing v5.")
+    }
+
+    @Test("A v4 library upgrades in place, with every folder closed, and the tree's folders save")
+    func upgradeFromV4() async throws {
+        let url = temporaryURL()
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        do {
+            let queue = try DatabaseQueue(path: url.path)
+            try LibraryMigrations.migrator.migrate(queue, upTo: "v4")
+            try await queue.write { db in
+                try db.execute(
+                    sql: """
+                        INSERT INTO volumes (id, uuid, name, first_seen_at, last_seen_at) VALUES (1, 'U', 'Drive', 0, 0);
+                        INSERT INTO sessions (volume_id, relative_path, sort_key, updated_at) VALUES (1, 'Photos', 'name', 1);
+                        """)
+            }
+        }
+        let store = try LibraryStore(url: url)
+        #expect(try await store.latestSession()?.source == .folder(BrowseScope(volume: VolumeID(rawValue: 1), path: "Photos")))
+        #expect(try await store.expandedFolders().isEmpty)
+
+        let photos = BrowseScope(volume: VolumeID(rawValue: 1), path: "Photos")
+        let trip = BrowseScope(volume: VolumeID(rawValue: 1), path: "Photos/Trip")
+        try await store.setFolder(photos, expanded: true)
+        try await store.setFolder(trip, expanded: true)
+        try await store.setFolder(trip, expanded: true)
+        try await store.setFolder(trip, expanded: false)
+        // A volume that isn't in the library saves nothing.
+        try await store.setFolder(BrowseScope(volume: VolumeID(rawValue: 99), path: "X"), expanded: true)
+        #expect(try await store.expandedFolders() == [photos])
+
+        // They go with their volume.
+        try await store.pool.write { try $0.execute(sql: "DELETE FROM volumes WHERE id = 1") }
+        #expect(try await store.expandedFolders().isEmpty)
     }
 
     @Test("A v3 library upgrades in place, keeping folder and album sessions and organization data")
