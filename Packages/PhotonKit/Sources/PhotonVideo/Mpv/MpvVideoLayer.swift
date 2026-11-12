@@ -38,24 +38,38 @@ final class MpvVideoLayer: CAOpenGLLayer {
         contentsGravity = .resizeAspect
         actions = ["bounds": NSNull(), "position": NSNull(), "contents": NSNull(), "opacity": NSNull()]
 
-        let attributes: [CGLPixelFormatAttribute] = [
+        if let made = Self.makeContext(accelerated: true) ?? Self.makeContext(accelerated: false) {
+            pixelFormat = made.0
+            context = made.1
+        }
+    }
+
+    /// A GL context on the GPU, or else on Apple's software renderer. A Mac always has the first; a
+    /// virtual machine, such as CI's, may have only the second, which is slower but plays.
+    private static func makeContext(accelerated: Bool) -> (CGLPixelFormatObj, CGLContextObj)? {
+        var attributes: [CGLPixelFormatAttribute] = [
             kCGLPFAOpenGLProfile, CGLPixelFormatAttribute(rawValue: UInt32(kCGLOGLPVersion_3_2_Core.rawValue)),
-            kCGLPFAAccelerated, kCGLPFADoubleBuffer, kCGLPFAAllowOfflineRenderers,
+            kCGLPFADoubleBuffer,
             kCGLPFAColorSize, CGLPixelFormatAttribute(rawValue: 24),
             kCGLPFAAlphaSize, CGLPixelFormatAttribute(rawValue: 8),
-            CGLPixelFormatAttribute(rawValue: 0),
         ]
+        if accelerated {
+            attributes += [kCGLPFAAccelerated, kCGLPFAAllowOfflineRenderers]
+        } else {
+            attributes += [kCGLPFARendererID, CGLPixelFormatAttribute(rawValue: UInt32(kCGLRendererGenericFloatID))]
+        }
+        // PHOTON_MPV_SOFTWARE_GL=1 skips the GPU, to try CI's path on a Mac.
+        if accelerated, ProcessInfo.processInfo.environment["PHOTON_MPV_SOFTWARE_GL"] == "1" { return nil }
+        attributes.append(CGLPixelFormatAttribute(rawValue: 0))
         var count: GLint = 0
         var format: CGLPixelFormatObj?
-        if CGLChoosePixelFormat(attributes, &format, &count) == kCGLNoError, let format {
-            var made: CGLContextObj?
-            if CGLCreateContext(format, nil, &made) == kCGLNoError, let made {
-                pixelFormat = format
-                context = made
-            } else {
-                CGLReleasePixelFormat(format)
-            }
+        guard CGLChoosePixelFormat(attributes, &format, &count) == kCGLNoError, let format else { return nil }
+        var made: CGLContextObj?
+        guard CGLCreateContext(format, nil, &made) == kCGLNoError, let made else {
+            CGLReleasePixelFormat(format)
+            return nil
         }
+        return (format, made)
     }
 
     /// Core Animation copies layers for its presentation tree.
@@ -135,6 +149,14 @@ final class MpvVideoLayer: CAOpenGLLayer {
             CGLSetCurrentContext(nil)
             CGLUnlockContext(context)
         }
+    }
+
+    /// mpv has shown a frame: the next draw shows video, not just the background. The update flag
+    /// alone can miss it, because a frame that arrives between `update()` and the draw that follows is
+    /// drawn without a flag, and a paused video sends no other.
+    func frameIsShown() {
+        lock.withLock { drawsFrame = true }
+        scheduleDraw()
     }
 
     /// Asks for a draw on the draw queue. Coalesced, so a burst of updates is one draw.

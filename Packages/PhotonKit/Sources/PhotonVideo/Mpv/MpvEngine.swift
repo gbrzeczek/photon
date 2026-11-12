@@ -206,6 +206,8 @@ final class MpvPlayback: VideoPlayback {
                 notify()
             }
         case .playbackRestart:
+            // mpv restarts playback only once its video output has the first frame.
+            if status == .ready || status == .loading { videoLayer.frameIsShown() }
             if restartedGeneration < seekGeneration {
                 restartedGeneration = seekGeneration
                 finishSeek(true)

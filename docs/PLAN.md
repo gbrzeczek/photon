@@ -423,6 +423,8 @@ What else building it found:
 - **A paused load shows its first frame after the seek that follows it**, so posters were the first frame. The grabber now waits for the load's own frame before seeking.
 - **mpv flags a new frame before it reports the restart**, so `isShowingFrame` is the first draw with a frame in it.
 - **A `CAOpenGLLayer` draws only in a window**, so the tests host it in one that isn't shown, as the viewer does.
+- **CI's virtual Macs have no GPU OpenGL.** The layer asks for an accelerated context, then Apple's software renderer, which plays the test set; without it every playback was unsupported there. `PHOTON_MPV_SOFTWARE_GL=1` skips the GPU, to try that path on a Mac.
+- **The FRAME update flag can miss a frame.** One that arrives between `mpv_render_context_update` and the draw after it is drawn without the flag, and a paused video sends no other. So mpv's playback restart, which comes only once its video output has a frame, also counts. The software renderer made this race common, but a Mac could hit it too.
 - **MPEG-TS seeks land late**, after the time asked for, so an exact seek couldn't reach it. `hr-seek-demuxer-offset` starts half a second early.
 
 ### Repository layout
