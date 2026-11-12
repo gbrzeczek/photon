@@ -216,6 +216,7 @@ final class ViewerView: NSView, NSDraggingSource {
     private func applyBackdropColor() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             backdrop.backgroundColor = NSColor.windowBackgroundColor.cgColor
+            video.backdropColor = NSColor.windowBackgroundColor.cgColor
         }
     }
 

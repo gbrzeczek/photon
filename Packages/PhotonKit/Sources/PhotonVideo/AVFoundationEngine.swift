@@ -46,7 +46,10 @@ final class AVFoundationPlayback: VideoPlayback {
         player.actionAtItemEnd = .pause
         playerLayer = AVPlayerLayer(player: player)
         playerLayer.videoGravity = .resizeAspect
-        playerLayer.actions = ["bounds": NSNull(), "position": NSNull(), "contents": NSNull(), "opacity": NSNull()]
+        playerLayer.actions = [
+            "bounds": NSNull(), "position": NSNull(), "contents": NSNull(), "opacity": NSNull(),
+            "backgroundColor": NSNull(),
+        ]
         observe()
     }
 

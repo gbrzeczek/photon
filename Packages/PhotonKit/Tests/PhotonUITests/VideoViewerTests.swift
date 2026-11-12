@@ -160,6 +160,9 @@ struct VideoViewerTests {
         let video = browser.video
         browser.press("m", code: 46)
         #expect(video.isMuted)
+        // Edges the video's own aspect leaves inside the frame are the backdrop, not the thumbnail.
+        #expect(video.playback?.layer.backgroundColor != nil)
+        #expect(video.playback?.layer.backgroundColor == video.backdropColor)
 
         browser.pressSpace()
         #expect(browser.model.isViewerOpen)

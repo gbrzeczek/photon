@@ -39,6 +39,12 @@ final class ViewerVideo {
     /// Why nothing is playing, for the status bar.
     private(set) var problem: String?
     private var controlsVisible = false
+    /// The viewer's backdrop. The player keeps the video's exact aspect inside the frame, which comes
+    /// from the stored size and can differ by a few pixels, so its edges are this color rather than
+    /// clear, where the stretched thumbnail beneath would show.
+    var backdropColor: CGColor? {
+        didSet { playback?.layer.backgroundColor = backdropColor }
+    }
     /// Tells the viewer that the status or what's showing changed.
     var onChange: (() -> Void)?
 
@@ -117,6 +123,7 @@ final class ViewerVideo {
         let layer = playback.layer
         layer.isHidden = true
         layer.frame = frame
+        layer.backgroundColor = backdropColor
         if let below, let parent = below.superlayer {
             parent.insertSublayer(layer, above: below)
         }
