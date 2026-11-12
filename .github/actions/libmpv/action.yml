@@ -1,0 +1,37 @@
+name: Photon's libmpv
+description: >
+  Puts Photon's own LGPL build of libmpv and FFmpeg in Vendor/mpv, from the cache when this version of
+  scripts/mpv/build.sh has built it before, and otherwise by building it, which takes a while.
+runs:
+  using: composite
+  steps:
+    - name: Restore libmpv
+      id: cache
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          Vendor/mpv/lib
+          Vendor/mpv/LICENSES
+          Vendor/mpv/manifest.txt
+        key: libmpv-${{ runner.os }}-${{ hashFiles('scripts/mpv/build.sh') }}
+
+    - name: Build libmpv
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        brew install meson ninja pkgconf nasm
+        ARCHS="arm64 x86_64" scripts/mpv/build.sh
+
+    - name: Save libmpv
+      if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          Vendor/mpv/lib
+          Vendor/mpv/LICENSES
+          Vendor/mpv/manifest.txt
+        key: libmpv-${{ runner.os }}-${{ hashFiles('scripts/mpv/build.sh') }}
+
+    - name: Show libmpv
+      shell: bash
+      run: cat Vendor/mpv/manifest.txt

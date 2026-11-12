@@ -4,6 +4,7 @@ import PhotonCore
 import PhotonIndex
 import PhotonMedia
 import PhotonTestSupport
+import PhotonVideo
 import Testing
 
 @testable import PhotonUI
@@ -81,7 +82,8 @@ struct VideoViewerTests {
         }
     }
 
-    /// In name order: a photo, two videos, a photo, and a format no engine here plays.
+    /// In name order: a photo, two videos, a photo, a file no engine plays, then the fallback's MKV and a
+    /// VP9 MP4, which AVFoundation opens and can't decode.
     private func makeBrowser() async throws -> Browser {
         _ = NSApplication.shared
         let directory = FileManager.default.temporaryDirectory
@@ -98,6 +100,8 @@ struct VideoViewerTests {
         try await SyntheticVideo.write(to: media.appending(path: "b-clip.mp4"), format: .h264MP4, options: options)
         try await SyntheticVideo.write(to: media.appending(path: "c-clip.mov"), format: .proRes422MOV, options: options)
         try Data(repeating: 1, count: 2048).write(to: media.appending(path: "e-other.mkv"))
+        try FallbackClip.h264MKV.copy(to: media, as: "f-fallback.mkv")
+        try FallbackClip.vp9MP4.copy(to: media, as: "g-vp9.mp4")
 
         let url = directory.appending(path: "library/Library.sqlite")
         let handle = try await Task.detached { try BrowserLibrary.open(url: url) }.value
@@ -121,11 +125,13 @@ struct VideoViewerTests {
         let browser = Browser(directory: directory, library: library, model: model, view: view, window: window)
 
         library.addFolder(media)
-        #expect(try await until { !library.isIndexing && model.itemCount == 5 })
+        #expect(try await until { !library.isIndexing && model.itemCount == 7 })
         let volume = try #require(library.onlineVolumes.first)
         #expect(try await until { try await library.store.thumbnailBacklog(volume: volume) == 0 })
         model.setSort(BrowseSort(key: .name, ascending: true))
-        let names = ["a-photo.jpg", "b-clip.mp4", "c-clip.mov", "d-photo.jpg", "e-other.mkv"]
+        let names = [
+            "a-photo.jpg", "b-clip.mp4", "c-clip.mov", "d-photo.jpg", "e-other.mkv", "f-fallback.mkv", "g-vp9.mp4",
+        ]
         let sorted = try await until {
             let rows = try await library.store.browseRows(instances: model.result.instanceIDs)
             let byInstance = Dictionary(uniqueKeysWithValues: rows.map { ($0.instanceID.rawValue, $0.path.name) })
@@ -142,7 +148,8 @@ struct VideoViewerTests {
         defer { browser.tearDown() }
         let shown = try await until {
             _ = browser.view.grid.tick()
-            return browser.view.grid.visibleThumbnailCount == 4
+            // The fallback's two have frames only when this checkout has libmpv.
+            return browser.view.grid.visibleThumbnailCount == (MpvEngine.isAvailable ? 6 : 4)
         }
         #expect(shown)
     }
@@ -193,6 +200,55 @@ struct VideoViewerTests {
         browser.viewer.finishTransitionForTesting()
         #expect(!browser.model.isViewerOpen)
         #expect(browser.video.playback == nil)
+    }
+
+    @Test(
+        "The fallback plays an MKV in the viewer from the keyboard, and the Video menu follows it",
+        .enabled(if: MpvEngine.isAvailable, "No libmpv. Run scripts/mpv/build.sh"))
+    func fallback() async throws {
+        let browser = try await makeBrowser()
+        defer { browser.tearDown() }
+        browser.model.select(row: 5)
+        browser.model.openViewer()
+        #expect(try await until { browser.video.status == .ready })
+        let video = browser.video
+        #expect(try await until { video.playback?.isShowingFrame == true })
+        #expect(browser.model.videoMenu.isReady)
+        #expect(!browser.model.videoMenu.isPlaying)
+
+        browser.press("m", code: 46)
+        #expect(video.isMuted)
+        #expect(try await until { browser.model.videoMenu.isMuted })
+        browser.pressSpace()
+        #expect(browser.model.isViewerOpen)
+        #expect(video.isPlaying)
+        #expect(try await until { browser.model.videoMenu.isPlaying })
+        // The menu's Play and Pause is the same command as Space.
+        browser.model.togglePlayback()
+        #expect(!video.isPlaying)
+        #expect(try await until { !browser.model.videoMenu.isPlaying })
+        browser.model.skipVideo(forward: true)
+        #expect(try await until { (video.playback?.currentTime ?? 0) > 1.9 })
+        browser.model.skipVideo(forward: false)
+        #expect(try await until { (video.playback?.currentTime ?? 9) < 0.1 })
+
+        browser.pressEscape()
+        browser.viewer.finishTransitionForTesting()
+        #expect(browser.video.playback == nil)
+        #expect(try await until { !browser.model.videoMenu.isReady })
+    }
+
+    @Test(
+        "A video AVFoundation opens and can't decode moves to mpv in the viewer",
+        .enabled(if: MpvEngine.isAvailable, "No libmpv. Run scripts/mpv/build.sh"))
+    func handover() async throws {
+        let browser = try await makeBrowser()
+        defer { browser.tearDown() }
+        browser.model.select(row: 6)
+        browser.model.openViewer()
+        #expect(try await until { browser.video.status == .ready })
+        #expect(browser.video.problem == nil)
+        #expect(String(describing: type(of: try #require(browser.video.playback))).contains("Mpv"))
     }
 
     @Test("Speed keys and the menu set what Space plays at, volume carries, and skipping seeks")
@@ -345,14 +401,16 @@ struct VideoViewerTests {
         #expect(browser.model.selection.currentRow == 2)
     }
 
-    @Test("A format with no engine says so, and Space still doesn't close it")
+    @Test("A file no engine can play says so, and Space still doesn't close it")
     func unsupported() async throws {
         let browser = try await makeBrowser()
         defer { browser.tearDown() }
         browser.model.select(row: 4)
         browser.model.openViewer()
         #expect(try await until { browser.video.problem != nil })
-        #expect(browser.model.viewerStatus.contains("Can't play this format"))
+        // With libmpv, the file reaches mpv, which can't decode it. Without, nothing takes the format.
+        let problem = MpvEngine.isAvailable ? "Can't play this video" : "Can't play this format"
+        #expect(browser.model.viewerStatus.contains(problem))
         browser.pressSpace()
         #expect(browser.model.isViewerOpen)
     }

@@ -22,6 +22,14 @@ Build the app, the same way CI does:
 xcodebuild build -project Photon.xcodeproj -scheme Photon -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO
 ```
 
+The video fallback for MKV, WebM, AVI and the rest uses Photon's own LGPL build of libmpv and FFmpeg, which stays out of git. Build it once, into `Vendor/mpv`, after `brew install meson ninja pkgconf nasm`. Without it the app and the tests still build, the app has no fallback, and the fallback's tests are skipped:
+
+```bash
+scripts/mpv/build.sh
+```
+
+`ARCHS="arm64 x86_64"` builds it universal, as releases need. `PHOTON_MPV_LOG=v` prints mpv's log.
+
 `photon-index` is a development tool for measuring indexing outside the app. It prints counts, never file names:
 
 ```bash
@@ -58,6 +66,7 @@ Every push to main that passes CI is released as a signed DMG by `.github/workfl
 - Send all reads of user media through the per-volume I/O scheduler. Reads must be cancellable.
 - Never memory-map files on removable media. This includes `.mappedIfSafe` and passing a URL to `CGImageSource`. Read the bytes normally, then create the source from them.
 - Never give AVFoundation a file URL. It opens files itself, past the scheduler. Use `ScheduledResourceLoader`, which serves its reads through the scheduler.
+- Never give mpv a path. It gets a `photon://` URL, and `stream_cb.h` serves its reads through the scheduler. Keep FFmpeg built with no protocols, and keep `MpvCore.isolation` covering every way mpv opens files beside the one it's given.
 - On `willUnmount`, cancel all work and close every file handle for that volume.
 
 ### User data

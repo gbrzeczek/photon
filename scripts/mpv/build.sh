@@ -114,7 +114,8 @@ meson_build() {
 }
 
 build_ffmpeg() {
-    local arch="$1" prefix="$WORK/prefix-$arch" build="$WORK/build-$arch/ffmpeg"
+    local arch="$1"
+    local prefix="$WORK/prefix-$arch" build="$WORK/build-$arch/ffmpeg"
     if [ -f "$build/.done" ]; then return; fi
     rm -rf "$build"
     mkdir -p "$build"
@@ -275,7 +276,8 @@ relink() {
 
 # Copies the libraries that libmpv needs, and nothing else, following symlinks to the real files.
 collect() {
-    local arch="$1" dest="$2" prefix="$WORK/prefix-$arch/lib"
+    local arch="$1" dest="$2"
+    local prefix="$WORK/prefix-$arch/lib"
     rm -rf "$dest"
     mkdir -p "$dest"
     local queue=("libmpv.2.dylib") seen=" "
@@ -310,8 +312,9 @@ for arch in $ARCHS; do
     collect "$arch" "$WORK/lib-$arch"
 done
 
-rm -rf "$OUT/lib" "$OUT/LICENSES"
+rm -rf "${OUT:?}/lib" "${OUT:?}/LICENSES"
 mkdir -p "$OUT/lib" "$OUT/LICENSES"
+# shellcheck disable=SC2086 # ARCHS is a list of words.
 set -- $ARCHS
 for dylib in "$WORK/lib-$1"/*.dylib; do
     name="$(basename "$dylib")"
@@ -346,4 +349,4 @@ smoke_test "$OUT/lib/libmpv.2.dylib"
     (cd "$OUT/lib" && shasum -a 256 ./*.dylib)
 } > "$OUT/manifest.txt"
 
-echo "Built $(ls "$OUT/lib" | wc -l | tr -d ' ') dylibs in $OUT/lib for $ARCHS"
+echo "Built $(find "$OUT/lib" -name '*.dylib' | wc -l | tr -d ' ') dylibs in $OUT/lib for $ARCHS"

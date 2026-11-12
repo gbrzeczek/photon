@@ -106,7 +106,19 @@ final class AVFoundationPlayback: VideoPlayback {
             let seconds = item.duration.seconds
             duration = seconds.isFinite ? seconds : 0
             canPlayBackward = item.canPlayReverse
-            status = .ready
+            // AVFoundation is ready to play a file whose video it can't decode, such as VP9 in MP4, and
+            // would play its sound alone. Like mpv's empty `video-codec`, that's unsupported, which lets
+            // the next engine try.
+            let asset = asset
+            Task { [weak self] in
+                let tracks = (try? await asset.loadTracks(withMediaType: .video)) ?? []
+                var decodable = false
+                for track in tracks where (try? await track.load(.isDecodable)) == true { decodable = true }
+                guard let self, !self.isClosed, self.status == .loading else { return }
+                self.status = decodable ? .ready : .unsupported
+                self.notify()
+            }
+            return
         case .failed:
             status = loader.readError != nil ? .unavailable : .unsupported
         default:

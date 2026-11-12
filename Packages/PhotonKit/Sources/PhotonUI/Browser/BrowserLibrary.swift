@@ -117,6 +117,9 @@ public final class BrowserLibrary {
     /// Connects known volumes that are mounted, rescans them, and carries on with any thumbnails they're
     /// missing.
     public func start() async {
+        // Loading libmpv opens 13 dylibs, which the main thread mustn't wait for when the first video
+        // tile or the viewer asks whether the fallback is there.
+        Task.detached(priority: .utility) { _ = MpvEngine.isAvailable }
         await refresh()
         await connectVolumes()
     }

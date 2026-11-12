@@ -2,7 +2,7 @@
 
 Photon is a native macOS browser for photos and videos stored in local folders and on removable media. This document records the product scope, architecture, milestones and open risks.
 
-**Status:** Milestone 6, video, is half built: AVFoundation plays, thumbnails and scrubs the format test set through the I/O scheduler, and the libmpv fallback isn't started. See [Milestone 6 results](#milestone-6-results). Milestone 5, organization, is built, and favorites survive moving a library to a new drive on disk images. See [Milestone 5 results](#milestone-5-results). Milestone 4 is built and checked on disk images, with no physical pull by the user's decision, and measured on a real screen on a seeded 100k library and on the T7 Touch's real library of 27,235 assets. See [Milestone 4 results](#milestone-4-results), [Milestone 3 results](#milestone-3-results) and [Milestone 2 results](#milestone-2-results). The drive doesn't hold 100k files, so those two libraries together stand in for a 100k library on the drive. Spike code lives in [`Spikes/`](../Spikes/README.md), and results are under [Milestone 0 spikes](#milestone-0-spikes) and [Milestone 1 results](#milestone-1-results).
+**Status:** Milestone 6, video, is built: AVFoundation and Photon's own LGPL build of libmpv play, thumbnail and scrub both halves of the format test set through the I/O scheduler, on the internal disk and on exFAT disk images. Live Photo motion and play and pause in the menu bar aren't built. See [Milestone 6 results](#milestone-6-results). Milestone 5, organization, is built, and favorites survive moving a library to a new drive on disk images. See [Milestone 5 results](#milestone-5-results). Milestone 4 is built and checked on disk images, with no physical pull by the user's decision, and measured on a real screen on a seeded 100k library and on the T7 Touch's real library of 27,235 assets. See [Milestone 4 results](#milestone-4-results), [Milestone 3 results](#milestone-3-results) and [Milestone 2 results](#milestone-2-results). The drive doesn't hold 100k files, so those two libraries together stand in for a 100k library on the drive. Spike code lives in [`Spikes/`](../Spikes/README.md), and results are under [Milestone 0 spikes](#milestone-0-spikes) and [Milestone 1 results](#milestone-1-results).
 
 ## Product scope
 
@@ -52,6 +52,8 @@ Cloud backup, duplicate detection and face recognition are future features (see 
 | Sorting | Rows are sorted in process on integers or byte keys, not by `ORDER BY` | A natural name sort with `localizedStandardCompare` costs seconds at 100k rows. The byte keys are close to Finder's order for camera names, but aren't identical |
 | Video reads | AVFoundation reads through `AVAssetResourceLoader` on a private URL scheme, served by the volume's I/O scheduler | AVFoundation would otherwise open the file itself, past the scheduler, its cancellation and its handle count, and might memory-map it |
 | Video | AVFoundation first, with a libmpv fallback, behind one interface. libmpv draws through its render API into a `CAOpenGLLayer`, from our own LGPL build | Spike 2: every test format played with no dropped frames on both embedding paths, and this one needs no patched mpv |
+| libmpv build | `scripts/mpv/build.sh` builds pinned mpv, FFmpeg and their dependencies as separate dylibs, LGPL only. They stay out of git, CI caches them on the script's hash, and PhotonVideo loads them at run time | Reproducible from pinned commits, replaceable as the LGPL asks, and the package still builds and tests without them |
+| mpv's reads | Every byte through `stream_cb.h` from the volume's scheduler, with FFmpeg built with no protocols and mpv kept from opening anything beside the file | mpv would otherwise open files itself, past the scheduler, its cancellation and its handle count |
 | Viewer | An overlay in the same window, one layer whose contents move from thumbnail to preview to full resolution. It covers the detail column, so the sidebar stays | The grid is never torn down, and a sharper image lands without anything moving |
 | Previews | The size that fills the viewer for that photo, not the screen | A screen-sized preview would be scaled back down by the GPU, which costs sharpness as well as memory |
 | Pasteboard writes | Off the main thread, after clearing the pasteboard at once | Writing costs about 150 µs per real file, and it must never stall a frame |
@@ -175,7 +177,7 @@ First-time indexing takes about 30 minutes per 100k photos at full speed, and ab
 - Embedded previews are mostly 160 px, too small for standard thumbnails. They are 12 times faster, so they fill tiles first, and a full decode then replaces them.
 - HEIC metadata can't be read from a partial file through ImageIO, so HEIC and AVIF files get a full read for now. A parser of our own could avoid that later.
 - Other photos try a 256 KB prefix, then 4 MB, then the whole file up to 512 MB, for formats such as some RAW files that keep metadata later on.
-- Video metadata comes from a small parser of QuickTime and MP4 boxes, which reads only box headers and the `moov` box, through the scheduler. AVFoundation isn't used here because it opens files itself. MKV, WebM, AVI and other containers have no metadata until FFmpeg's libraries arrive in Milestone 6.
+- Video metadata comes from a small parser of QuickTime and MP4 boxes, which reads only box headers and the `moov` box, through the scheduler. AVFoundation isn't used here because it opens files itself. MKV, WebM, AVI and the other containers get theirs from FFmpeg's demuxers through libmpv, reading the indexer's open file, and stopping in mpv's `on_preloaded` hook, before any track is selected, so nothing decodes. FFmpeg's demuxer is used for all of them, because mpv's own Matroska demuxer leaves out the date.
 - Video thumbnails are one frame through AVFoundation, which reads only the index and a keyframe. They haven't been measured on the T7.
 
 ### Thumbnails and memory
@@ -189,7 +191,8 @@ First-time indexing takes about 30 minutes per 100k photos at full speed, and ab
 - During fast scrolling, tiles show the stored dominant color and skip decoding.
 - The rough cost is 2–5 GB per 100k photos, so a large drive could use 25 GB or more.
 - The cache has a size limit, 20 GB for now. Small thumbnails are kept for every asset, and large packs are evicted whole, least recently used first, with favorites last. Replaced thumbnails leave unused bytes in their pack until it goes, since nothing compacts packs yet.
-- **Video tiles** show a frame from about a second in, or halfway through a shorter clip, at the nearest keyframe, which decodes one frame. The first frame is often black. They keep the duration badge. A video gets no embedded preview stage, so the first pass reads nothing for it. A format no engine here decodes is marked failed without a read, and keeps the film symbol, so the fallback's arrival needs a migration that clears failed videos.
+- **Video tiles** show a frame from about a second in, or halfway through a shorter clip, at the nearest keyframe, which decodes one frame. The first frame is often black. They keep the duration badge. A video gets no embedded preview stage, so the first pass reads nothing for it. A format no engine here decodes is marked failed without a read, and keeps the film symbol. Migration v6 cleared every failed video when the fallback arrived, so each gets one more try.
+- **The fallback's frames** come from mpv's software renderer, which applies the pixel aspect and rotation as playback does. AVFoundation goes first for its own formats, and mpv takes what it opened and couldn't decode, such as VP9 in MP4. MPEG program and transport streams land on the keyframe after the time asked for, rather than before it.
 - **Offline**, stored thumbnails show as usual. Anything missing keeps its dominant color, or a neutral fill, and nothing fails.
 
 ### Grid and list
@@ -373,34 +376,59 @@ The viewer also takes a pinch, a mouse wheel or a scroll with Command or Option 
 `VideoEngine` hides two implementations:
 
 - **AVFoundation:** MOV and MP4 with H.264, HEVC, ProRes, and AV1 on Macs with a hardware decoder (M3 and later).
-- **libmpv fallback:** MKV, WebM, AVI, WMV and similar. Thumbnails for these formats use FFmpeg's libraries, so both share one dependency stack.
+- **libmpv fallback:** MKV, WebM, AVI, WMV, FLV, MPEG program and transport streams, Ogg, DV, MXF and RealMedia. Thumbnails and metadata for these formats use FFmpeg's libraries through libmpv, so all three share one dependency stack. mpv also takes a MOV or MP4 that AVFoundation opened and couldn't decode: `VideoEngines.candidates` lists the engine for the format and then those worth trying after it, and the viewer and hover previews move to the next one on `unsupported`.
 
 libmpv uses `vo=libmpv` and the OpenGL render API, drawn into a `CAOpenGLLayer` tagged sRGB. OpenGL is deprecated, so the Vulkan path through MoltenVK stays as the exit. It needs a patched mpv to handle window resizes, which our own build would make possible.
 
 **Reads.** AVFoundation never gets a file URL. `ScheduledResourceLoader` gives it a URL on a private scheme and answers each loading request with one I/O job: open the file, check its size and modified time against the library, read in 1 MB pieces, check again, close. A request is answered with at most 4 MB, and AVFoundation asks again for the rest, so a request to the end of a large file never pulls all of it into memory, and no job holds the volume for long. Playback reads at `visible`, and background thumbnails at `backgroundWork`. No handle stays open between requests, so `willUnmount` finds nothing to close but what's mid-read. A read that fails for the drive's sake makes the playback `unavailable`, which retries from the same place once the volume is back, and a file AVFoundation can't decode is `unsupported`.
 
+**The fallback's reads** follow the same rules. mpv gets a `photon://` URL, never a path, and `stream_cb.h` sends every read to `ScheduledByteProvider`: each miss is one job that opens the file, checks it's the indexed one, reads a 1 MB block, checks again and closes. Two blocks are kept. mpv's thread waits for the job, never the main thread, and `cancel_fn` cancels it, so suspending the scheduler on `willUnmount` fails mpv's read at once and leaves no handle. Nothing else can open a file: FFmpeg is built with no protocols at all, and mpv is told to leave alone the subtitles, audio and cover art beside a file, references in playlists and EDLs, ordered chapters, its config and its scripts, which the build doesn't have. A test checks that this build knows every one of those options, so none is silently ignored.
+
 **Controls.** A transport bar on Liquid Glass at the bottom of the viewer: skip back, play and pause, skip forward, elapsed and remaining time, a scrubber, speed and the speaker, each with a vertical slider on glass that opens above it on hover, and full screen. A panel stays while the pointer is over it or its button, and closes a moment after it leaves both. It appears when the video is ready and on any pointer movement, and goes 2.5 seconds after the last one while playing. It stays while paused or in use. None of its controls take focus, so the keys stay with the viewer. Mute, volume and speed carry from one video to the next.
 
-**Scrub previews.** Hovering over the scrubber or dragging it shows a frame above the bar, with its time. Frames come from the playback's own asset, at the nearest keyframe within half a second, at 160 pt. One decodes at a time, and only the latest request waits behind it, so a fast drag never builds a queue. A drag also moves the video itself to keyframes as it goes, then to the exact frame when the button comes up, and playing resumes if it was playing.
+**Scrub previews.** Hovering over the scrubber or dragging it shows a frame above the bar, with its time. Frames come from the playback's own asset, at the nearest keyframe within half a second, at 160 pt. One decodes at a time, and only the latest request waits behind it, so a fast drag never builds a queue. A drag also moves the video itself to keyframes as it goes, then to the exact frame when the button comes up, and playing resumes if it was playing. The fallback's previews come from a second mpv core with the software renderer, reading through the scheduler at `visible`, in the same one-at-a-time way.
 
-**Format test set.** `SyntheticVideo` writes real clips with AVFoundation, with a color that changes per frame: H.264 in MP4, MOV and M4V, HEVC in MOV and MP4, ProRes 422 and Motion JPEG in MOV. `photon-index videos <folder>` writes the same set for looking at in the app. The fallback's formats need clips from FFmpeg, which CI doesn't have.
+**Format test set.** `SyntheticVideo` writes real clips with AVFoundation, with a color that changes per frame: H.264 in MP4, MOV and M4V, HEVC in MOV and MP4, ProRes 422 and Motion JPEG in MOV. The fallback's set is 15 clips of FFmpeg's moving test pattern, mostly 320×240 for two seconds and 3.7 MB together: H.264 in MKV and MPEG-TS, VP9 in WebM and MP4, VP8 in WebM, AV1 in MKV, MPEG-4 Part 2 and DivX 3 in AVI, WMV 8 in ASF, Sorenson Spark in FLV, MPEG-2 in a program stream, Theora in Ogg, NTSC DV with 4:3 pixels that aren't square, DNxHR in MXF, and Opus alone in MKV. They're committed in `PhotonTestSupport`, because CI has no FFmpeg to encode them, and `scripts/mpv/make-test-clips.sh` writes them again with any FFmpeg. `photon-index videos <folder>` writes both sets for looking at in the app.
 
 Apple's MediaExtension framework stays an option, but each user would have to enable the extension in System Settings. Use LGPL builds of FFmpeg and mpv unless the project adopts a GPL-compatible license.
 
-Photon needs its own build of mpv and FFmpeg, shipped as signed dylibs or frameworks. MPVKit was fine for the spike, but it can't ship: its static linking doesn't obviously meet the LGPL, it leaves out decoders the fallback exists for (such as DivX 3, DV, DNxHD and Theora), and its README says not to rely on it.
+**Photon's libmpv build.** MPVKit was fine for the spike, but it can't ship: its static linking doesn't obviously meet the LGPL, it leaves out decoders the fallback exists for (such as DivX 3, DV, DNxHD and Theora), and its README says not to rely on it. `scripts/mpv/build.sh` builds Photon's own instead:
 
-`VideoEngine` must also:
+| | |
+|---|---|
+| What | mpv 0.41.0 as libmpv only, FFmpeg 8.1.3, libplacebo 7.360.1, libass 0.17.4, dav1d 1.5.4, FreeType 2.14.3, HarfBuzz 15.1.0 and FriBidi 1.0.16, each fetched by tag and checked against a pinned commit |
+| License | LGPL 2.1 or later: FFmpeg without `--enable-gpl` or `--enable-nonfree`, mpv with `-Dgpl=false`, and the rest LGPL, ISC, MIT, BSD or FreeType's license. The licenses ship in `Contents/Resources/Licenses/libmpv`, with a manifest of versions, commits and each dylib's SHA-256 |
+| Form | 13 dylibs, about 24 MB for one architecture, in `Contents/Frameworks`, each with an `@rpath` install name, so any one of them can be replaced, as the LGPL asks. Universal with `ARCHS="arm64 x86_64"`, cross-built on Apple silicon |
+| FFmpeg | No protocols, no network, no encoders, muxers or devices. Every decoder and demuxer, VideoToolbox, and dav1d, because FFmpeg's own AV1 decoder needs hardware that Macs before M3 lack |
+| mpv | No Lua or JavaScript, so the hardened runtime would need no JIT entitlement, no Cocoa, no Swift and no windowing. Two changes to its `meson.build`, none to its code: VideoToolbox's OpenGL interop is offered without Cocoa, which it doesn't need, and the AVFoundation audio output gets the two small C helpers it uses, which mpv only compiled with Cocoa |
+| Checked | The script loads the finished libmpv as the app does, resolving every symbol, and starts a core, so a library that links but can't load fails the build. The first build of this script didn't load, which is how the second change was found |
+| Where | `Vendor/mpv`, which git ignores. The app's "Embed libmpv" build phase copies it into the bundle, and a checkout without it builds an app with no fallback. `build-dmg.sh` refuses to build a release without it, and checks that every dylib has both architectures. CI, Release and Release check build it once per version of the script, through `.github/actions/libmpv`, and cache it |
 
-- Report a file as failed when `video-codec` is empty. With a missing decoder and an audio track, mpv plays audio only and raises no error.
+PhotonVideo never links libmpv. `MpvLibrary` loads it with `dlopen` from the app's Frameworks folder, or, for tests and tools, from `Vendor/mpv` or `PHOTON_MPV_LIBRARY`, and looks up each function, checking for client API 2.5 or later. Without it, `MpvEngine` plays nothing and the viewer says "Can't play this format", as before. Only libmpv's ISC-licensed headers are in the repository, in the `CMpv` module. `PHOTON_MPV_LOG=v` prints mpv's log, which only ever names a `photon://` URL.
+
+`VideoEngine` must also, and does:
+
+- Report a file as failed when `video-codec` is empty. With a missing decoder and an audio track, mpv plays audio only and raises no error. The audio-only clip in the test set checks this.
 - Set `ao=avfoundation`, because CoreAudio output failed on planar audio.
-- Keep every mpv call off the main thread, and never wait on a draw, because Core Animation stops drawing while the display sleeps.
+- Keep every mpv call off the main thread, and never wait on a draw, because Core Animation stops drawing while the display sleeps. Commands and properties go through the playback's own queue, events arrive on the core's thread, and drawing happens on the layer's draw queue. A `display()` that Core Animation asks for on the main thread moves to the draw queue, and the old frame stays meanwhile.
 - Release the GL context in the layer's `deinit`, after `mpv_render_context_free` and `mpv_terminate_destroy`. Core Animation can still display the layer after mpv is gone.
-- Decide how mpv's reads fit the disk rules. mpv opens files itself, which bypasses the per-volume I/O scheduler and its cancellation. `stream_cb.h` may solve this, and it's untested.
+- Read only through the scheduler, by `stream_cb.h`, as above.
+
+What else building it found:
+
+- **`mpv_wait_event` with no timeout didn't always wake for `mpv_wakeup`**, so closing a core could wait forever. The event thread waits a quarter of a second at a time, as the spike did.
+- **A core opened with no track selected ends the file before `FILE_LOADED`**, so metadata comes from the `on_preloaded` hook instead. A command sent while mpv waits in a hook would wait on mpv in turn, so only properties are read there.
+- **A paused load shows its first frame after the seek that follows it**, so posters were the first frame. The grabber now waits for the load's own frame before seeking.
+- **mpv flags a new frame before it reports the restart**, so `isShowingFrame` is the first draw with a frame in it.
+- **A `CAOpenGLLayer` draws only in a window**, so the tests host it in one that isn't shown, as the viewer does.
+- **MPEG-TS seeks land late**, after the time asked for, so an exact seek couldn't reach it. `hr-seek-demuxer-offset` starts half a second early.
 
 ### Repository layout
 
 ```text
 App/                 Thin macOS app target
+scripts/mpv/         Photon's libmpv build, the build phase that embeds it, and the fallback's clips
+Vendor/mpv/          The build's output, ignored by git
 Photon.xcodeproj/    App project, which uses PhotonKit as a local package
 Spikes/              Milestone 0 measurement code, not part of the app
 Packages/PhotonKit/
@@ -408,6 +436,7 @@ Packages/PhotonKit/
   PhotonIndex        Scanning, hashing, volumes, I/O scheduling
   PhotonMedia        Metadata, decoding, thumbnails, pasteboard
   PhotonVideo        VideoEngine and its implementations
+  CMpv               libmpv's public headers, ISC licensed. Nothing links libmpv
   PhotonUI           Grid, list, viewer, sidebar
   PhotonTestSupport  Synthetic media and disk images, for tests and tools only
   photon-index       Development tool for measuring indexing
@@ -942,7 +971,9 @@ At this point `LibraryIndexer` refused any writable external volume, in the app 
 
 Ad-hoc signing isn't used, because permissions can be lost on each rebuild. Downloaded builds aren't notarized, so people have to approve them under System Settings → Privacy & Security → Open Anyway. The hardened runtime stays off, as in the project.
 
-Developer ID and notarization can be added later ($99/year). That also needs the hardened runtime, with bundled libraries signed to match. The libmpv fallback's dylibs will be signed by `build-dmg.sh` as nested code, inside out.
+Developer ID and notarization can be added later ($99/year). That also needs the hardened runtime, with bundled libraries signed to match. The libmpv fallback's 13 dylibs are signed by `build-dmg.sh` as nested code, inside out, before the app. The build has no Lua or JavaScript, so the hardened runtime would need no JIT entitlement for it, though library validation would want the dylibs signed by the same team.
+
+**libmpv in releases.** Every workflow that builds the app gets libmpv from `.github/actions/libmpv`, which restores it from the cache keyed on `scripts/mpv/build.sh`'s hash, or builds it universal and saves it. The first build after the script changes takes a long while on a hosted runner, so the jobs allow 90 minutes. A release carries the LGPL texts and the manifest in `Contents/Resources/Licenses/libmpv`. The LGPL also asks that the source be available: the script names each library's upstream tag and commit, and its only changes are the two to mpv's build described in [Video](#video).
 
 ### Milestone 7a results
 
@@ -987,8 +1018,8 @@ Check model licenses before distributing. InsightFace's pretrained models are no
 |---|---|
 | Hand-built grid costs more than expected | `CALayer` grid chosen knowingly. Selection, drag and accessibility are built with the grid, not added later |
 | OpenGL is removed from macOS | Vulkan through MoltenVK works, but needs a patched mpv. Our own build makes that possible |
-| Our own mpv and FFmpeg build is harder than expected | Not attempted yet, and needed for the fallback, the other half of Milestone 6 |
-| mpv's file access bypasses the I/O scheduler | Test `stream_cb.h` in Milestone 6. AVFoundation's is solved by `ScheduledResourceLoader` |
+| Our own mpv and FFmpeg build breaks with a new version | Pinned commits, two build-system changes that fail loudly when they no longer apply, and a load test at the end of the build. A first CI build takes a while, and is cached after |
+| mpv's file access bypasses the I/O scheduler | Solved by `stream_cb.h`, FFmpeg with no protocols, and mpv's options for the files beside a video. A future mpv option that opens files would need adding to the list |
 | Volume UUIDs change or collide without a marker file | File sampling on mount, hash-based reattachment, and separate handling of two mounted volumes with one UUID |
 | First-time indexing takes tens of minutes | Priority scheduling, resumable stages, visible tiles first, one read per file |
 | A slower link caps throughput | The T7 Touch linked at USB 2 speed on one connection. Worth showing in the UI if indexing is slow |

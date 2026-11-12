@@ -251,6 +251,12 @@ final class ViewerVideo {
             height: VideoControlsView.height)
     }
 
+    /// What the Video menu needs. Changes only when one of these does, not with the time.
+    var menuState: VideoMenuState {
+        guard let playback, playback.status == .ready else { return VideoMenuState(isMuted: isMuted) }
+        return VideoMenuState(isReady: true, isPlaying: playback.rate != 0, isMuted: isMuted, speed: speed)
+    }
+
     // MARK: Commands
 
     /// Space and the play button. At the end, it starts again.
@@ -470,4 +476,19 @@ final class ViewerVideo {
     }
 
     var areControlsVisibleForTesting: Bool { controlsVisible }
+}
+
+/// The Video menu's state.
+public struct VideoMenuState: Equatable, Sendable {
+    public var isReady = false
+    public var isPlaying = false
+    public var isMuted = false
+    public var speed: Float = 1
+
+    public init(isReady: Bool = false, isPlaying: Bool = false, isMuted: Bool = false, speed: Float = 1) {
+        self.isReady = isReady
+        self.isPlaying = isPlaying
+        self.isMuted = isMuted
+        self.speed = speed
+    }
 }
