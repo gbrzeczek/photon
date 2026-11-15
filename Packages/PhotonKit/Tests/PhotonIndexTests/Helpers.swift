@@ -123,8 +123,10 @@ final class ConcurrencyMeter: Sendable {
 }
 
 /// A condition to wait for from a test, with a limit so that a bug fails rather than hangs.
+/// Generous by default, because CI's virtual Macs can starve a test process for seconds at a time while
+/// other suites run. A condition that's met returns at once, so it costs nothing on a fast machine.
 func eventually(
-    timeout: Duration = .seconds(10), _ condition: @Sendable () async throws -> Bool
+    timeout: Duration = .seconds(30), _ condition: @Sendable () async throws -> Bool
 ) async throws -> Bool {
     let clock = ContinuousClock()
     let deadline = clock.now + timeout

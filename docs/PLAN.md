@@ -708,6 +708,8 @@ What building it found, and fixed:
 - **An identifier on a SwiftUI container replaces its children's**, so the welcome's button couldn't be found by its own. The container now contains its elements.
 - **The synthetic photos were noise and stripes**, which made poor screenshots, so `SyntheticScenes` draws landscapes.
 
+**CI fixes.** This PR's first run failed four timing checks it didn't touch, and `main`'s last run had failed two others: three indexer and scheduler checks timed out together after 10 seconds, as if the whole test process had been starved, an H.264 M4V took more than 30 seconds to start playing, an MPEG-TS seek didn't report back in 10 seconds, and the inspector test read the sidebar's tags before they reloaded. The index tests' `eventually` and the video tests' `until` now wait up to 30 seconds by default, the M4V up to 60, and the tags test waits for the reload. A condition that's met returns at once, and no test expects one of these waits to run out.
+
 **Not verified:**
 
 - A real refusal of removable-volume access, which disk images can't produce. It's tested with injected `EPERM`.
