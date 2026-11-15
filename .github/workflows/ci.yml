@@ -31,7 +31,8 @@ jobs:
         uses: ./.github/actions/libmpv
 
       - name: Test PhotonKit
-        run: swift test --package-path Packages/PhotonKit
+        # Samples the test processes and fails if their output stops, so a hang shows where it is.
+        run: scripts/ci/test-with-watchdog.sh
 
       - name: Build the app
         run: >
