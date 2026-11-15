@@ -25,7 +25,7 @@ public enum SyntheticVideo {
         public static let avFoundationSet: [Format] = [h264MP4, h264MOV, hevcMOV, hevcMP4, h264M4V, proRes422MOV, jpegMOV]
     }
 
-    public struct Options: Sendable {
+    public struct Options: Sendable, Hashable {
         public var width = 320
         public var height = 180
         public var framesPerSecond: Int32 = 30
@@ -43,7 +43,57 @@ public enum SyntheticVideo {
         return (UInt8(255 * (1 - t)), UInt8(64), UInt8(255 * t))
     }
 
+    /// Writes a clip to `url`, copied from the one encoded for these settings in this process.
+    ///
+    /// Encoding talks to VideoToolbox's encoder service, which has hung on CI's virtual Macs and never
+    /// answered. Tests ask for the same few clips many times, and in parallel, so each distinct clip is
+    /// encoded once, one at a time, which makes that far less likely.
     public static func write(to url: URL, format: Format, options: Options = Options()) async throws {
+        let clip = try await encoded.clip(format: format, options: options)
+        try? FileManager.default.removeItem(at: url)
+        try FileManager.default.copyItem(at: clip, to: url)
+    }
+
+    private static let encoded = EncodedClips()
+
+    /// Clips encoded in this process, by format and options, in a folder of their own.
+    private actor EncodedClips {
+        private struct Key: Hashable {
+            var format: Format
+            var options: Options
+        }
+
+        private var clips: [Key: Task<URL, any Error>] = [:]
+        /// The last encode asked for. Each waits for the one before, so only one runs at a time.
+        private var last: Task<Void, Never>?
+        private let directory = FileManager.default.temporaryDirectory
+            .appending(path: "photon-synthetic-video-\(ProcessInfo.processInfo.processIdentifier)", directoryHint: .isDirectory)
+
+        func clip(format: Format, options: Options) async throws -> URL {
+            let key = Key(format: format, options: options)
+            if let existing = clips[key] { return try await existing.value }
+            let previous = last
+            let url = directory.appending(path: "\(clips.count).\(format.fileExtension)")
+            let directory = directory
+            let task = Task<URL, any Error> {
+                await previous?.value
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try await SyntheticVideo.encode(to: url, format: format, options: options)
+                return url
+            }
+            clips[key] = task
+            last = Task { _ = try? await task.value }
+            do {
+                return try await task.value
+            } catch {
+                // A later test can try again.
+                if clips[key] == task { clips[key] = nil }
+                throw error
+            }
+        }
+    }
+
+    private static func encode(to url: URL, format: Format, options: Options) async throws {
         try? FileManager.default.removeItem(at: url)
         let writer = try AVAssetWriter(outputURL: url, fileType: format.fileType)
         let settings: [String: Any] = [
