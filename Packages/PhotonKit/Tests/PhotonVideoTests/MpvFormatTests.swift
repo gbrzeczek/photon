@@ -220,8 +220,12 @@ struct MpvFormatTests {
 
         playback.isMuted = true
         playback.play(rate: 1)
-        #expect(await until { playback.currentTime > min(0.3, clip.seconds / 3) })
         #expect(playback.rate == 1)
+        #expect(await until(timeout: .seconds(30)) { playback.currentTime > min(0.3, clip.seconds / 3) })
+        // A loaded machine can look only once the clip has ended, where mpv pauses on its own. Before
+        // the end, it must still say it's playing.
+        let ended = playback.currentTime >= playback.duration - 0.15
+        #expect(playback.rate == 1 || ended, "Rate \(playback.rate) at \(playback.currentTime) of \(playback.duration)")
         playback.pause()
         #expect(await until { playback.rate == 0 })
 

@@ -155,6 +155,7 @@ public final class ThumbnailLoader: @unchecked Sendable {
             guard isWanted(request) else { continue }
             let stored = locations[request.asset] ?? []
             var bestTier: ThumbnailTier?
+            var lost: [ThumbnailTier] = []
             for tier in ThumbnailMemoryCache.fallbacks(for: request.wanted) {
                 guard let location = stored.first(where: { $0.tier == tier }) else { continue }
                 if let found = cache.thumbnail(asset: request.asset, tier: tier) {
@@ -165,17 +166,23 @@ public final class ThumbnailLoader: @unchecked Sendable {
                     cache.insert(decoded, asset: request.asset)
                     deliver(decoded, for: request)
                 } else {
-                    // The bytes are gone, or damaged. Forget the row, so that it gets made again.
-                    let store = store
-                    Task.detached { try? await store.dropThumbnail(asset: request.asset, tier: tier) }
+                    // The bytes are gone, or damaged. The row is forgotten below, so it gets made again.
+                    lost.append(tier)
                     continue
                 }
                 bestTier = tier
                 break
             }
-            if bestTier.map({ $0 >= request.wanted }) == true || !request.generatesMissing {
-                finish(request)
-            } else {
+            let generates = bestTier.map({ $0 >= request.wanted }) != true && request.generatesMissing
+            if !generates { finish(request) }
+            if !lost.isEmpty {
+                // Generating only once the rows are gone, or the generator would find them and make nothing.
+                let store = store
+                Task.detached { [self] in
+                    for tier in lost { try? await store.dropThumbnail(asset: request.asset, tier: tier) }
+                    if generates { startGenerating(request) }
+                }
+            } else if generates {
                 // Originals too small for this size never get it. The generator knows, and stops at once.
                 startGenerating(request)
             }

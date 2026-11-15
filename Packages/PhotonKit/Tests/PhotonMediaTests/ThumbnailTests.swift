@@ -251,13 +251,17 @@ struct ThumbnailPipelineTests {
         defer { loader.stop() }
         loader.request(
             ThumbnailRequest(asset: row.assetID, instance: row.instanceID, wanted: .small, priority: .visible))
-        var backlog = 0
-        for _ in 0..<500 {
-            backlog = try await fixture.store.thumbnailBacklog(volume: volume)
-            if backlog == 1 { break }
-            try await Task.sleep(for: .milliseconds(10))
+        // It's made again at once, for the tile that asked, and nothing is left for the background pass.
+        var remade = false
+        for _ in 0..<1000 where !remade {
+            remade = loader.cache.thumbnail(asset: row.assetID, tier: .small) != nil
+            if !remade { try await Task.sleep(for: .milliseconds(10)) }
         }
-        #expect(backlog == 1)
+        #expect(remade)
+        #expect(try await fixture.store.thumbnailBacklog(volume: volume) == 0)
+        let locations = try fixture.store.thumbnailLocationsBlocking(assets: [row.assetID])[row.assetID] ?? []
+        let location = try #require(locations.first { $0.tier == .small })
+        #expect(fixture.packs.readBlocking(location) != nil)
     }
 
     @Test("Offline volumes generate nothing and don't fail")
