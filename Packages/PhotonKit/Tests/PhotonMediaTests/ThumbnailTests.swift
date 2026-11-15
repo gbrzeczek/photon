@@ -300,6 +300,34 @@ struct ThumbnailPipelineTests {
         }
     }
 
+    @Test("A limit lowered while running, as Settings does, evicts at the next check, and the count follows")
+    func loweredLimit() async throws {
+        var options = ThumbnailPackOptions()
+        options.packByteLimit = 1
+        let fixture = try PipelineFixture(options: options)
+        try fixture.write("a.jpg", seed: 1)
+        try fixture.write("b.jpg", seed: 2)
+        let volume = try await fixture.index()
+        _ = try await fixture.generator.runBackground(volume: volume)
+        _ = try await fixture.packs.append([
+            EncodedThumbnail(tier: .small, data: Data(count: 1), width: 1, height: 1),
+            EncodedThumbnail(tier: .large, data: Data(count: 1), width: 1, height: 1),
+        ])
+        try await fixture.packs.enforceLimit()
+        let before = try await fixture.packs.cacheByteCount()
+        let rows = try await fixture.rows(volume)
+        #expect(try fixture.store.thumbnailLocationsBlocking(assets: rows.map(\.assetID)).values.allSatisfy {
+            $0.contains { $0.tier == .large }
+        })
+
+        fixture.packs.setCacheByteLimit(0)
+        try await fixture.packs.enforceLimit()
+
+        let stored = try fixture.store.thumbnailLocationsBlocking(assets: rows.map(\.assetID))
+        for row in rows { #expect(stored[row.assetID]?.map(\.tier) == [.small]) }
+        #expect(try await fixture.packs.cacheByteCount() < before)
+    }
+
     @Test("The memory cache stays within its limit, and returns the nearest size")
     func memoryCache() throws {
         var options = SyntheticMedia.ImageOptions()

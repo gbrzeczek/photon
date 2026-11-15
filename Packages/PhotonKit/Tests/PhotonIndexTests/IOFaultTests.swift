@@ -165,6 +165,27 @@ struct IOFaultTests {
         #expect(report.failed == 4)
     }
 
+    @Test("A root macOS won't list is reported as denied, keeps its files, and clears once it lists")
+    func deniedRoot() async throws {
+        let fixture = try Fixture()
+        try fixture.write(3)
+        let indexer = fixture.indexer()
+        let first = try await indexer.index(path: fixture.folder.path)
+        #expect(!first.scan.isRootDenied)
+
+        // What a refused removable-volume permission looks like from here: every listing fails with EPERM.
+        fixture.faults.set { operation, _ in operation == .list ? .fail(code: EPERM) : nil }
+        let denied = try await indexer.index(path: fixture.folder.path)
+        #expect(denied.outcome == .completed)
+        #expect(denied.scan.isRootDenied)
+        #expect(denied.scan.removed == 0)
+
+        fixture.faults.set(nil)
+        let allowed = try await indexer.index(path: fixture.folder.path)
+        #expect(!allowed.scan.isRootDenied)
+        #expect(allowed.scan.unchanged == 3)
+    }
+
     @Test("Tools refuse a writable external drive, and the app's options don't")
     func policy() async throws {
         let fixture = try Fixture()

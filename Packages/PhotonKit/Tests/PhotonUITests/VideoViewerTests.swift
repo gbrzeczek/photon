@@ -107,7 +107,8 @@ struct VideoViewerTests {
         let handle = try await Task.detached { try BrowserLibrary.open(url: url) }.value
         let library = BrowserLibrary(handle)
         await library.start()
-        let model = BrowserModel(library: library)
+        // Its own settings, because a test turns previews off.
+        let model = BrowserModel(library: library, settings: AppSettings(defaults: nil))
         let view = BrowserContainerView(model: model)
         let window = NSWindow(
             contentRect: CGRect(x: 0, y: 0, width: 900, height: 600), styleMask: [.titled], backing: .buffered,
@@ -506,5 +507,25 @@ struct VideoViewerTests {
         browser.hover(row: 1)
         try await Task.sleep(for: .milliseconds(500))
         #expect(browser.preview.playback == nil)
+    }
+
+    @Test("Settings' switch turns previews off, and a pointer moving over a playing one stops it")
+    func hoverSwitch() async throws {
+        let browser = try await makeBrowser()
+        defer { browser.tearDown() }
+        _ = browser.view.grid.tick()
+        browser.hover(row: 1)
+        #expect(try await until { browser.preview.isPlaying })
+
+        browser.model.settings.playsVideoPreviews = false
+        browser.hover(row: 1)
+        #expect(browser.preview.playback == nil)
+        browser.hover(row: 2)
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(browser.preview.playback == nil)
+
+        browser.model.settings.playsVideoPreviews = true
+        browser.hover(row: 2)
+        #expect(try await until { browser.preview.isPlaying })
     }
 }

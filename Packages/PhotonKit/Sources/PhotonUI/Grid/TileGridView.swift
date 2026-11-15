@@ -155,6 +155,7 @@ final class TileGridView: NSView, BrowserContent {
         let library = model.library
         videoPreview = TileVideoPreview(engines: library.videoEngines, lookup: { await library.videoSource($0) })
         super.init(frame: .zero)
+        videoPreview.isEnabled = { [weak model] in model?.settings.playsVideoPreviews ?? false }
         tileLayout = TileLayout(mode: model.layoutMode)
 
         addSubview(scrollView)

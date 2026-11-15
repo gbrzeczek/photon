@@ -215,6 +215,7 @@ public final class LibraryIndexer: Sendable {
                 report.scan.removed += scan.removed
                 report.scan.unchanged += scan.unchanged
                 report.scan.unreadableDirectories += scan.unreadableDirectories
+                if scan.isRootDenied { report.scan.isRootDenied = true }
                 try await store.markRootScanned(root)
             }
             report.scanSeconds = (clock.now - stageStart) / .seconds(1)
