@@ -198,7 +198,10 @@ private struct StatusBar: View {
     var body: some View {
         HStack {
             VolumeBadge(model: model)
+            // On the count alone. On the bar, SwiftUI would give every text in it the same identifier,
+            // and a notice beside the count would make two.
             Text(status)
+                .accessibilityIdentifier("photon.status")
             Spacer()
             if let message = model.notice ?? library.lastError ?? library.volumeNotice
                 ?? (library.activity.isEmpty ? nil : library.activity)
@@ -211,7 +214,6 @@ private struct StatusBar: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 5)
         .background(.bar)
-        .accessibilityIdentifier("photon.status")
     }
 
     private var status: String {
@@ -558,6 +560,15 @@ private struct ImageMenuItems: View {
         // them, and the context menu shows them.
         Button(model.actionItemsAreFavorites ? "Unfavorite" : "Favorite") { model.toggleFavorite() }
             .disabled(!hasItems)
+        Divider()
+        // Command shortcuts never reach a text field as typing, so these can be the menu's.
+        Button("Rotate Right") { model.rotate(clockwise: true) }
+            .keyboardShortcut("r", modifiers: .command)
+            .disabled(!hasItems || !model.canRotateActionItems)
+        Button("Rotate Left") { model.rotate(clockwise: false) }
+            .keyboardShortcut("r", modifiers: [.command, .option])
+            .disabled(!hasItems || !model.canRotateActionItems)
+        Divider()
         Menu("Add to Album") {
             ForEach(model.library.albums.filter { !$0.isSmart }) { album in
                 Button(album.name) { model.addToAlbum(album.id) }

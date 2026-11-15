@@ -166,6 +166,68 @@ struct OffscreenRenderTests {
         #expect(redIsHigher(54, 32) == redIsHigher(54, 96), "The surface is upside down compared with the image")
     }
 
+    @Test(
+        "A rotation turns the picture clockwise, in the flipped layers the app uses",
+        .enabled(if: environment["PHOTON_RENDER_CHECKS"] != nil), arguments: [1, 2, 3])
+    func rotationIsClockwise(turns: Int) throws {
+        /// A picture with a red top-left corner, `turns` quarter turns clockwise from that, on gray.
+        func marked(_ width: Int, _ height: Int, corner: Int) throws -> CGImage {
+            let context = try #require(
+                CGContext(
+                    data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                    space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.setFillColor(gray: 0.5, alpha: 1)
+            context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+            context.setFillColor(red: 1, green: 0, blue: 0, alpha: 1)
+            // Clockwise from the top left, in Core Graphics' coordinates, where y points up.
+            let origins = [(0, height - 8), (width - 8, height - 8), (width - 8, 0), (0, 0)]
+            context.fill(CGRect(x: origins[corner].0, y: origins[corner].1, width: 8, height: 8))
+            return try #require(context.makeImage())
+        }
+        let odd = turns % 2 == 1
+        let shown = odd ? CGSize(width: 32, height: 64) : CGSize(width: 64, height: 32)
+
+        // Turned by a layer on the left, and drawn already turned on the right.
+        CATransaction.begin()
+        let root = CALayer()
+        root.isGeometryFlipped = true
+        root.bounds = CGRect(x: 0, y: 0, width: 128, height: 64)
+        let turned = CALayer()
+        turned.contents = try marked(64, 32, corner: 0)
+        QuarterTurns.place(turned, in: CGRect(origin: .zero, size: shown), turns: turns)
+        root.addSublayer(turned)
+        let expected = CALayer()
+        expected.frame = CGRect(origin: CGPoint(x: 64, y: 0), size: shown)
+        expected.contents = try marked(Int(shown.width), Int(shown.height), corner: turns)
+        root.addSublayer(expected)
+        CATransaction.commit()
+        #expect(turned.frame == CGRect(origin: .zero, size: shown))
+
+        let url = FileManager.default.temporaryDirectory.appending(path: "photon-turn-\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try save(root, size: CGSize(width: 128, height: 64), to: url)
+        let source = try #require(CGImageSourceCreateWithURL(url as CFURL, nil))
+        let image = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        let probe = try #require(
+            CGContext(
+                data: nil, width: 128, height: 64, bitsPerComponent: 8, bytesPerRow: 128 * 4,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        probe.draw(image, in: CGRect(x: 0, y: 0, width: 128, height: 64))
+        let bytes = try #require(probe.data).assumingMemoryBound(to: UInt8.self)
+        func isRed(_ x: Int, _ y: Int) -> Bool {
+            let pixel = bytes + y * 128 * 4 + x * 4
+            return pixel[0] > 200 && pixel[1] < 60
+        }
+        let (width, height) = (Int(shown.width), Int(shown.height))
+        let corners = [(3, 3), (width - 4, 3), (width - 4, height - 4), (3, height - 4)]
+        let left = corners.map { isRed($0.0, $0.1) }
+        let right = corners.map { isRed($0.0 + 64, $0.1) }
+        #expect(left.filter { $0 }.count == 1)
+        #expect(left == right, "The layer turned the other way from the picture drawn turned")
+    }
+
     private func save(_ layer: CALayer, size: CGSize, to url: URL) throws {
         let device = try #require(MTLCreateSystemDefaultDevice())
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(

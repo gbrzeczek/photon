@@ -234,7 +234,20 @@ First-time indexing takes about 30 minutes per 100k photos at full speed, and ab
 - **Offline**, or if the file changed, the thumbnail stays and nothing fails. Moving on works as usual.
 - **Permission.** A build with no stable signature, started by Launch Services, may not get removable-volume access, and then reads fail with the same quiet result, so the viewer stays on thumbnails with no explanation. Milestone 7's signing should settle this. If it doesn't, this needs a message of its own.
 - **Videos** fly in from their tile like photos, on their stored thumbnail, and the player's layer only appears over it once it has a frame, so nothing flashes black. A player opens once the viewer has settled, so a held key passes videos without opening any, and it starts playing at once. Moving on or closing stops it, and the flight back carries the thumbnail. Zoom is off for videos. See [Video](#video) for the controls.
-- **Rotation isn't applied.** Nothing sets the stored rotation yet. When something does, the viewer has to use it too.
+- **Rotation** is applied as a layer transform, and the flights carry it. See [Rotation](#rotation).
+
+### Rotation
+
+Non-destructive, in quarter turns, stored on the asset as `rotation`, clockwise from 0 to 3, on top of the file's own EXIF orientation. The file is never touched, so content hashes stay stable and read-only and offline volumes rotate like any other.
+
+- **Commands.** Rotate Right, Command-R, and Rotate Left, Command-Option-R, in the Image menu and the context menu. They act on what every organization command acts on: the photo in the viewer, or else the selection, or else the current item. Each photo turns from where it was, so a mixed selection stays mixed. Videos are skipped, and the items are disabled when only videos are chosen.
+- **Shown by a layer.** Thumbnails, previews and full-resolution surfaces are made upright from the file, as before, and a layer turns them, so a rotation costs no decoding and shows at once. A tile that isn't turned draws as before; a turned one draws through a sublayer, because a layer can't turn its own contents. The list's thumbnail and the viewer's picture work the same way, and the viewer's flights to and from a tile carry the turn. Aspect ratios in the result already allow for it, so the layout reflows.
+- **In the viewer** a turn goes back to fit and animates a quarter turn, which Reduce Motion skips.
+- **Copy** still puts the original file on the pasteboard, untouched. Generated image data for apps that take pixels is turned to match what shows. A drag image of a turned photo is drawn turned too, from its thumbnail in the viewer.
+- **Inspector.** A turned photo has a Rotation row, such as "90° right", since the file itself shows otherwise anywhere else.
+- **Identity.** Rotation is organization data: it keeps an asset alive with no files, survives merges, and follows the content to a new drive, as described under [Asset identity](#asset-identity).
+
+**Not built:** rotating videos, which would need the player layers, hover previews and scrub previews to turn too. Destructive rotation stays out of scope.
 
 ### Copy and drag
 
@@ -329,7 +342,7 @@ Keyboard navigation is built alongside the grid, list and viewer, not added duri
 - Common actions appear in the menu bar with their shortcuts, so that they're discoverable.
 - Shortcuts are tested on non-US keyboard layouts.
 
-**Shortcuts.** Some rows have no effect yet: rename and trash need the file operations layer. Rotation has no milestone yet. The checks against Photos and Finder, and on non-US layouts, haven't been done.
+**Shortcuts.** Some rows have no effect yet: rename and trash need the file operations layer. The checks against Photos and Finder, and on non-US layouts, haven't been done.
 
 | Context | Key | Action |
 |---|---|---|
@@ -350,7 +363,7 @@ Keyboard navigation is built alongside the grid, list and viewer, not added duri
 | Everywhere | Cmd-I | Show or hide the inspector |
 | Everywhere | Cmd-F | Search |
 | Everywhere | Cmd-N, Cmd-Option-N | New album, new smart album |
-| Everywhere | Cmd-R, Cmd-Option-R | Rotate right, rotate left (non-destructive) |
+| Everywhere | Cmd-R, Cmd-Option-R | Rotate right, rotate left (non-destructive, photos only) |
 | Everywhere | Cmd-Shift-R | Rename |
 | Everywhere | Cmd-Delete | Move to Trash |
 | Everywhere | Ctrl-Cmd-S | Show or hide the sidebar |
@@ -502,6 +515,7 @@ Asked for by the user, ahead of the remaining milestones. All built, and listed 
 | 4 | **Removable media:** mount handling, offline mode, session restore, eject | Passes the [removable media checks](#removable-media-checks) on disk images: forced detach, injected failures, reconnect and eject |
 | 5 | **Organization:** favorites, albums, tags, smart albums, search, stacks | Favorites survive moving a library to a new drive |
 | 6 | **Video:** AVPlayer, fallback engine, thumbnails, scrub previews | A format test set plays and shows thumbnails |
+| 6a | **Rotation:** non-destructive quarter turns of photos, in grid, list and viewer | A photo turns from the keyboard in grid and viewer, shows turned everywhere, and its file is untouched |
 | 7a | **Release pipeline:** signed DMG built by GitHub Actions on every push to main | A push to main that passes CI becomes a tagged release on GitHub, with a DMG signed by the self-signed certificate |
 | 7b | **Polish:** accessibility, Settings, onboarding, screenshots | Ready for daily use |
 | 8 | **Duplicates:** near-duplicate detection, similar-scene stacks | Similar scenes collapse into one browsable tile |
@@ -651,6 +665,16 @@ The tool was first validated on an exFAT disk image, and those numbers are in `S
 - **Why it works:** a self-signed certificate gives a designated requirement of bundle identifier plus certificate, which stayed identical across rebuilds. Ad-hoc signing gives a `cdhash` requirement, which changes on every build.
 - **Also confirmed:** `codesign` works with an untrusted certificate when given its SHA-1 hash and keychain, so CI doesn't need to trust it. Local builds ran, even though `spctl` rejects them.
 - **Testing note:** disk images aren't gated by TCC at all, so this check always needs a real drive.
+
+### Milestone 6a results
+
+A mini-milestone, asked for by the user after Milestone 6, as described in [Rotation](#rotation).
+
+**Done when a photo turns from the keyboard in grid and viewer, shows turned everywhere, and its file is untouched.** `OrganizationUITests` turns a photo with Command-R and back with Command-Option-R in the grid, and the other way round in the viewer, through the real menu, and the inspector's Rotation row follows. `OrganizationTests` checks that each photo turns from where it was, videos don't, aspect ratios swap, and rows carry the turn. `PasteboardTests` checks that pasted image data turns clockwise for every turn. `OffscreenRenderTests` checks with `PHOTON_RENDER_CHECKS` that a turned layer matches a picture drawn already turned, in the flipped layers the app uses, and fails when the direction is reversed. Snapshots of a small library of landscape photos, turned one, two and three times, showed the grid and viewer in light and dark and the list in dark, each the right way round.
+
+**Measured** with `PHOTON_PERF_OUT` on the seeded 100k library with 23,334 photos turned, in a release build on an external display at a backing scale of 1. Every scenario ran at 119.6–120 fps, with at most 2 missed frames and a worst main-thread frame of 3.9 ms. Launch to the result was 1,063 ms on the first run and 446 ms on the second, over the 350 ms target, but main on the same library and display gave 1,061 and 434 ms, so it isn't this milestone's. A result with nothing turned carries no rotations, and an unturned tile takes the same path as before.
+
+**Also fixed:** `testCommandFSearchesAndPeriodStillTypes`, which failed on main. The status bar's identifier was on the whole bar, so SwiftUI gave it to every text there, and a notice beside the count made two matches. It's on the count alone now, which gives its text as its value, not its label. The test also searched for a name from an older seed, and expected clearing a search to bring back a selection the search had hidden, which it doesn't, as in Finder. It now checks the item count instead.
 
 ### Milestone 6 results
 

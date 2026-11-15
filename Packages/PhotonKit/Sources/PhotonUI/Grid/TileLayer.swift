@@ -15,8 +15,47 @@ final class TileLayer: CALayer {
     /// Favorite and stack symbols, at the bottom leading corner.
     private var mark: CALayer?
     private(set) var markKey = 0
+    /// Clockwise quarter turns of the picture. A layer can't turn its own contents, so a turned picture
+    /// is drawn by a sublayer, which tiles that aren't turned never make.
+    private(set) var quarterTurns = 0
+    private var turned: PlainLayer?
 
     override func action(forKey event: String) -> (any CAAction)? { nil }
+
+    /// What the tile shows, turned or not.
+    var picture: Any? { quarterTurns == 0 ? contents : turned?.contents }
+
+    func setPicture(_ picture: Any?, gravity: CALayerContentsGravity, turns: Int) {
+        quarterTurns = QuarterTurns.normalized(turns)
+        guard quarterTurns != 0 else {
+            if let turned {
+                turned.contents = nil
+                turned.isHidden = true
+            }
+            contents = picture
+            contentsGravity = gravity
+            return
+        }
+        contents = nil
+        let layer = turned ?? {
+            let layer = PlainLayer()
+            layer.masksToBounds = true
+            // Below the badge and mark. The selection border draws over sublayers anyway.
+            insertSublayer(layer, at: 0)
+            turned = layer
+            return layer
+        }()
+        layer.contentsScale = contentsScale
+        layer.contents = picture
+        layer.contentsGravity = gravity
+        layer.isHidden = false
+        placePicture()
+    }
+
+    private func placePicture() {
+        guard let turned, !turned.isHidden else { return }
+        QuarterTurns.place(turned, in: bounds, turns: quarterTurns)
+    }
 
     func setBadge(_ image: CGImage?, scale: CGFloat) {
         guard let image else {
@@ -31,7 +70,9 @@ final class TileLayer: CALayer {
         placeBadge()
     }
 
+    /// Places what sits on the picture, and a turned picture, after the tile's size changed.
     func placeBadge() {
+        placePicture()
         if let mark, !mark.isHidden {
             mark.position = CGPoint(x: bounds.minX + mark.bounds.width / 2 + 4, y: bounds.maxY - mark.bounds.height / 2 - 4)
         }

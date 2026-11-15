@@ -89,6 +89,22 @@ extension BrowserModel {
         return rows.prefix(4096).allSatisfy { $0 < result.count && result.flags[$0].contains(.favorite) }
     }
 
+    // MARK: Rotation
+
+    /// Command-R and Command-Option-R. Only the library changes, so this works offline and on read-only
+    /// volumes too. Videos in the action items are left as they are.
+    public func rotate(clockwise: Bool) {
+        let assets = actionAssets
+        guard !assets.isEmpty else { return }
+        change { try await $0.rotate(assets, clockwise: clockwise) }
+    }
+
+    /// Whether any action item is a photo, which is all rotation turns.
+    public var canRotateActionItems: Bool {
+        // Bounded, like the favorite check, so a huge selection of videos doesn't walk every row.
+        actionRows.prefix(4096).contains { $0 < result.count && !result.flags[$0].contains(.video) }
+    }
+
     // MARK: Albums
 
     public func addToAlbum(_ album: AlbumID) {

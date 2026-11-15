@@ -36,7 +36,7 @@ extension LibraryStore {
                 db,
                 sql: """
                     SELECT f.*, a.kind, a.width, a.height, a.capture_date_ms, a.capture_utc_offset_min,
-                        a.duration_seconds
+                        a.duration_seconds, a.rotation
                     FROM file_instances f JOIN assets a ON a.id = f.asset_id
                     WHERE f.id IN (\(marks))
                     """,
@@ -58,7 +58,8 @@ extension LibraryStore {
                     captureDate: date.map {
                         CaptureDate(wallClockMilliseconds: $0, utcOffsetMinutes: row["capture_utc_offset_min"])
                     },
-                    durationSeconds: row["duration_seconds"])
+                    durationSeconds: row["duration_seconds"],
+                    quarterTurns: row["rotation"])
             }
             return instances.compactMap { byID[$0] }
         }
@@ -234,6 +235,8 @@ struct BrowseColumns: Sendable {
     private var colors: [UInt32] = []
     private var flags: [BrowseResult.Flags] = []
     private var durations: [Float] = []
+    private var rotations: [UInt8] = []
+    private var hasRotations = false
     private var volumes: [Int64] = []
     /// Stacks to collapse, or nil to show every member.
     var stacks: StackMap?
@@ -288,6 +291,9 @@ struct BrowseColumns: Sendable {
         colors.append(UInt32(truncatingIfNeeded: color ?? 0))
         flags.append(rowFlags)
         durations.append(Float(duration ?? 0))
+        let rotation: Int = row[8]
+        rotations.append(UInt8(truncatingIfNeeded: rotation & 3))
+        if rotation != 0 { hasRotations = true }
 
         switch sort {
         case .date:
@@ -358,7 +364,9 @@ struct BrowseColumns: Sendable {
             aspects: order.map { aspects[Int($0)] },
             colors: order.map { colors[Int($0)] },
             flags: order.map { flags[Int($0)] },
-            durations: order.map { durations[Int($0)] })
+            durations: order.map { durations[Int($0)] },
+            // Most libraries turn nothing, so their results carry no rotations at all.
+            rotations: hasRotations ? order.map { rotations[Int($0)] } : [])
     }
 
     /// Rows to keep: one for each asset, the first on a preferred volume if any, else the first. A bitmap

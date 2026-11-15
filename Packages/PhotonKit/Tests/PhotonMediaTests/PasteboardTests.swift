@@ -3,6 +3,7 @@ import ImageIO
 import PhotonCore
 import PhotonTestSupport
 import Testing
+import UniformTypeIdentifiers
 
 @testable import PhotonMedia
 
@@ -126,6 +127,56 @@ struct PasteboardTests {
         let properties = try #require(CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])
         #expect(properties[kCGImagePropertyPixelWidth] as? Int == 300)
         #expect(properties[kCGImagePropertyPixelHeight] as? Int == 600)
+    }
+
+    /// A 40 by 20 PNG, gray but for a red top-left corner.
+    private func markedPNG() throws -> Data {
+        let context = try #require(
+            CGContext(
+                data: nil, width: 40, height: 20, bitsPerComponent: 8, bytesPerRow: 0,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(gray: 0.5, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: 40, height: 20))
+        context.setFillColor(red: 1, green: 0, blue: 0, alpha: 1)
+        // Core Graphics' origin is at the bottom left.
+        context.fill(CGRect(x: 0, y: 10, width: 10, height: 10))
+        let output = NSMutableData()
+        let destination = try #require(CGImageDestinationCreateWithData(output, UTType.png.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, try #require(context.makeImage()), nil)
+        #expect(CGImageDestinationFinalize(destination))
+        return output as Data
+    }
+
+    /// Which corner of `data` is red: 0 top left, then clockwise.
+    private func redCorner(_ data: Data) throws -> (corner: Int?, width: Int, height: Int) {
+        let source = try #require(CGImageSourceCreateWithData(data as CFData, nil))
+        let image = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        let (width, height) = (image.width, image.height)
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let context = try #require(
+            CGContext(
+                data: &pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        // Rows in memory start at the top.
+        func isRed(_ x: Int, _ y: Int) -> Bool {
+            let index = (y * width + x) * 4
+            return pixels[index] > 200 && pixels[index + 1] < 60
+        }
+        let corners = [(2, 2), (width - 3, 2), (width - 3, height - 3), (2, height - 3)]
+        return (corners.firstIndex { isRed($0.0, $0.1) }, width, height)
+    }
+
+    @Test("Image data follows a non-destructive rotation, clockwise")
+    func rotatedEncoding() throws {
+        let data = try markedPNG()
+        #expect(try redCorner(data).corner == 0)
+        for turns in 0...3 {
+            let png = try #require(PasteboardImage.encode(data, as: .png, quarterTurns: turns))
+            let found = try redCorner(png)
+            #expect(found.corner == turns)
+            #expect(turns % 2 == 0 ? (found.width, found.height) == (40, 20) : (found.width, found.height) == (20, 40))
+        }
     }
 
     @Test("An HDR photo is tone mapped for the pasteboard")

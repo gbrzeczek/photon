@@ -68,12 +68,14 @@ public final class BrowseResult: Sendable {
     public let flags: [Flags]
     /// Seconds, or zero when unknown.
     public let durations: [Float]
+    /// Non-destructive rotation, in clockwise quarter turns from 0 to 3. Empty when nothing is turned.
+    public let rotations: [UInt8]
 
     public var count: Int { assetIDs.count }
 
     public init(
         assetIDs: [Int64], instanceIDs: [Int64], aspects: [Float], colors: [UInt32], flags: [Flags],
-        durations: [Float]
+        durations: [Float], rotations: [UInt8] = []
     ) {
         self.assetIDs = assetIDs
         self.instanceIDs = instanceIDs
@@ -81,6 +83,12 @@ public final class BrowseResult: Sendable {
         self.colors = colors
         self.flags = flags
         self.durations = durations
+        self.rotations = rotations
+    }
+
+    /// The clockwise quarter turns to show `row` with, on top of its own orientation.
+    public func quarterTurns(_ row: Int) -> Int {
+        row < rotations.count ? Int(rotations[row]) : 0
     }
 
     public static let empty = BrowseResult(
@@ -112,6 +120,8 @@ public struct BrowseRow: Hashable, Sendable {
     public var pixelHeight: Int?
     public var captureDate: CaptureDate?
     public var durationSeconds: Double?
+    /// Non-destructive rotation, in clockwise quarter turns.
+    public var quarterTurns: Int = 0
 }
 
 /// A folder with indexed files, for the sidebar.

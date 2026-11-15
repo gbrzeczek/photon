@@ -309,13 +309,12 @@ final class TileGridView: NSView, BrowserContent {
     }
 
     private func showVideoSymbol(on tile: TileLayer) {
-        tile.contentsGravity = .center
-        tile.contents = artwork.videoPlaceholder(appearance: effectiveAppearance)
+        tile.setPicture(artwork.videoPlaceholder(appearance: effectiveAppearance), gravity: .center, turns: 0)
     }
 
     private func show(_ thumbnail: DecodedThumbnail, on tile: TileLayer) {
-        tile.contents = thumbnail.surface
-        tile.contentsGravity = .resizeAspectFill
+        let turns = tile.row < result.count ? result.quarterTurns(tile.row) : 0
+        tile.setPicture(thumbnail.surface, gravity: .resizeAspectFill, turns: turns)
         tile.shownTier = thumbnail.tier
     }
 
@@ -428,7 +427,7 @@ final class TileGridView: NSView, BrowserContent {
         if videoPreview.owns(tile), !isReloading { videoPreview.stop() }
         tile.isHidden = true
         tile.opacity = 1
-        tile.contents = nil
+        tile.setPicture(nil, gravity: .resizeAspectFill, turns: 0)
         tile.shownTier = nil
         tile.setBadge(nil, scale: 1)
         tile.setMark(nil, key: 0, scale: 1)
@@ -992,7 +991,8 @@ final class TileGridView: NSView, BrowserContent {
         let previews = shown.map { row -> FileDragController.Preview in
             let tile = tiles[row]
             return FileDragController.Preview(
-                row: row, frame: tileLayout.frame(of: row), contents: tile?.contents)
+                row: row, frame: tileLayout.frame(of: row),
+                contents: QuarterTurns.image(tile?.picture, turns: tile?.quarterTurns ?? 0))
         }
         guard model.fileDrag.begin(from: document, event: event, previews: previews, formation: .pile) else {
             return false

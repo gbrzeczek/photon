@@ -30,6 +30,16 @@ enum BrowserContextMenu {
         favorite.keyEquivalentModifierMask = []
         menu.addItem(favorite)
 
+        let canRotate = hasItems && model.canRotateActionItems
+        let rotateRight = item("Rotate Right", #selector(MenuTarget.rotateRight), enabled: canRotate)
+        rotateRight.keyEquivalent = "r"
+        rotateRight.keyEquivalentModifierMask = .command
+        menu.addItem(rotateRight)
+        let rotateLeft = item("Rotate Left", #selector(MenuTarget.rotateLeft), enabled: canRotate)
+        rotateLeft.keyEquivalent = "r"
+        rotateLeft.keyEquivalentModifierMask = [.command, .option]
+        menu.addItem(rotateLeft)
+
         let albums = NSMenu()
         for album in model.library.albums where !album.isSmart {
             let entry = item(album.name, #selector(MenuTarget.addToAlbum(_:)))
@@ -92,6 +102,8 @@ enum BrowserContextMenu {
         @MainActor @objc func copyFiles() { model.copy() }
         @MainActor @objc func showInFinder() { model.showInFinder(rows: rows) }
         @MainActor @objc func toggleFavorite() { model.toggleFavorite() }
+        @MainActor @objc func rotateRight() { model.rotate(clockwise: true) }
+        @MainActor @objc func rotateLeft() { model.rotate(clockwise: false) }
         @MainActor @objc func addToAlbum(_ sender: NSMenuItem) { model.addToAlbum(AlbumID(rawValue: Int64(sender.tag))) }
         @MainActor @objc func removeFromAlbum() { model.removeFromAlbum() }
         @MainActor @objc func toggleTag(_ sender: NSMenuItem) { model.toggleTag(TagID(rawValue: Int64(sender.tag))) }
