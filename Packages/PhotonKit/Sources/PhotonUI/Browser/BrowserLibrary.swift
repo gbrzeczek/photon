@@ -91,7 +91,7 @@ public final class BrowserLibrary {
             let bytes = try? await originals.read(file.instance, priority: .visible)
             return await PasteboardImage.offPool {
                 guard let data = bytes ?? loader.storedThumbnailBlocking(asset: file.asset) else { return nil }
-                return PasteboardImage.encode(data, as: type)
+                return PasteboardImage.encode(data, as: type, quarterTurns: file.quarterTurns)
             }
         }
         indexer.setChangeHandler { [weak self] in

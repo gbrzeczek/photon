@@ -162,7 +162,8 @@ struct VideoFormatTests {
 
         playback.isMuted = true
         playback.play(rate: 1)
-        #expect(await until { playback.currentTime > 0.3 })
+        // Generous, because CI's virtual Macs decode HEVC in software while other suites run.
+        #expect(await until(timeout: .seconds(30)) { playback.currentTime > 0.3 }, "Stuck at \(playback.currentTime)")
         playback.pause()
         playback.seek(to: 1.5, exact: true)
         #expect(await until { abs(playback.currentTime - 1.5) < 0.05 })

@@ -60,6 +60,25 @@ extension LibraryStore {
         }
     }
 
+    // MARK: Rotation
+
+    /// Turns photos a quarter turn, by changing the library and never the file. Each keeps its own
+    /// rotation, so a mixed selection stays mixed. Videos aren't turned. Returns how many changed.
+    @discardableResult
+    public func rotate(_ assets: [AssetID], clockwise: Bool) async throws -> Int {
+        guard !assets.isEmpty else { return 0 }
+        return try await pool.write { db in
+            let ids = assets.map(\.rawValue)
+            try db.execute(
+                sql: """
+                    UPDATE assets SET rotation = (rotation + ?) % 4
+                    WHERE kind = ? AND id IN (\(databaseQuestionMarks(count: ids.count)))
+                    """,
+                arguments: [clockwise ? 1 : 3, MediaKind.photo.rawValue] as StatementArguments + StatementArguments(ids))
+            return db.changesCount
+        }
+    }
+
     // MARK: Albums
 
     /// Every album, manual and smart, by name.

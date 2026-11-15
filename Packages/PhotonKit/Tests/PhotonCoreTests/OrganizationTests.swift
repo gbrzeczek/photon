@@ -85,6 +85,42 @@ struct OrganizationTests {
         }
     }
 
+    // MARK: Rotation
+
+    @Test("Rotating turns each photo a quarter from where it was, and skips videos")
+    func rotation() async throws {
+        let library = try await TestLibrary()
+        let assets = try await addFiles(
+            library, [("a.jpg", .photo, nil), ("b.jpg", .photo, nil), ("c.mov", .video, 4)])
+        let sort = BrowseSort(key: .name, ascending: true)
+        // Nothing turned costs nothing per row.
+        #expect(try await library.store.browse(.allItems, sort: sort).rotations.isEmpty)
+
+        #expect(try await library.store.rotate([assets[0]], clockwise: true) == 1)
+        #expect(try await library.store.rotate(assets, clockwise: true) == 2)
+        var result = try await library.store.browse(.allItems, sort: sort)
+        #expect((0..<3).map(result.quarterTurns) == [2, 1, 0])
+        #expect(result.aspects[0] == Float(4) / 3)
+        #expect(result.aspects[1] == Float(3) / 4)
+
+        try await library.store.rotate(assets, clockwise: false)
+        try await library.store.rotate(assets, clockwise: false)
+        result = try await library.store.browse(.allItems, sort: sort)
+        #expect((0..<3).map(result.quarterTurns) == [0, 3, 0])
+        let rows = try await library.store.browseRows(instances: result.instanceIDs)
+        #expect(rows.map(\.quarterTurns) == [0, 3, 0])
+    }
+
+    @Test("A rotated photo keeps its rotation in every source that shows it")
+    func rotationInSources() async throws {
+        let library = try await TestLibrary()
+        let assets = try await addFiles(library, [("a.jpg", .photo, nil), ("b.jpg", .photo, nil)])
+        try await library.store.setFavorite(assets, true)
+        try await library.store.rotate([assets[1]], clockwise: false)
+        let result = try await library.store.browse(.favorites, sort: BrowseSort(key: .name, ascending: true))
+        #expect((0..<2).map(result.quarterTurns) == [0, 3])
+    }
+
     // MARK: Albums
 
     @Test("Albums hold assets, keep order of adding, and removing one touches nothing else")

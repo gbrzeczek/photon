@@ -36,6 +36,15 @@ struct InspectorView: View {
         }
     }
 
+    static func rotation(_ quarterTurns: Int) -> String? {
+        switch QuarterTurns.normalized(quarterTurns) {
+        case 1: "90° right"
+        case 2: "180°"
+        case 3: "90° left"
+        default: nil
+        }
+    }
+
     @ViewBuilder
     private func content(_ details: AssetDetails) -> some View {
         let asset = details.asset
@@ -45,6 +54,11 @@ struct InspectorView: View {
             LabeledContent("Kind", value: kind(asset, first))
             if let width = asset.metadata.pixelWidth, let height = asset.metadata.pixelHeight {
                 LabeledContent("Dimensions", value: "\(width) × \(height)")
+            }
+            // The file is never changed, so this says why the picture shows turned.
+            if let rotation = Self.rotation(asset.rotation) {
+                LabeledContent("Rotation", value: rotation)
+                    .accessibilityIdentifier("photon.inspector.rotation")
             }
             if let first {
                 LabeledContent("Size", value: ByteCountFormatter.string(fromByteCount: first.size, countStyle: .file))

@@ -65,7 +65,23 @@ final class BrowserTableView: NSTableView {
 
 /// A row in the list: a small thumbnail, and a label filling the rest.
 private final class ThumbnailView: NSView {
+    /// The thumbnail itself, in a sublayer so that it can turn. AppKit owns the view's own layer.
+    let picture = PlainLayer()
+    var quarterTurns = 0 {
+        didSet { if quarterTurns != oldValue { needsLayout = true } }
+    }
+
     override var isFlipped: Bool { true }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        if picture.superlayer == nil { layer?.addSublayer(picture) }
+        picture.contentsScale = window?.backingScaleFactor ?? 2
+        QuarterTurns.place(picture, in: bounds, turns: quarterTurns)
+        CATransaction.commit()
+    }
 }
 
 private final class ListCell: NSTableCellView {
@@ -86,7 +102,7 @@ private final class ListCell: NSTableCellView {
         ]
         if hasThumbnail {
             thumbnail.wantsLayer = true
-            thumbnail.layer?.contentsGravity = .resizeAspectFill
+            thumbnail.picture.contentsGravity = .resizeAspectFill
             thumbnail.layer?.masksToBounds = true
             thumbnail.layer?.cornerRadius = 3
             thumbnail.translatesAutoresizingMaskIntoConstraints = false
@@ -107,12 +123,13 @@ private final class ListCell: NSTableCellView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("Not used.") }
 
-    func show(asset: Int64, thumbnail decoded: DecodedThumbnail?, placeholder: CGColor?) {
+    func show(asset: Int64, thumbnail decoded: DecodedThumbnail?, placeholder: CGColor?, turns: Int) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         assetID = asset
         thumbnail.layer?.backgroundColor = placeholder
-        thumbnail.layer?.contents = decoded?.surface
+        thumbnail.picture.contents = decoded?.surface
+        thumbnail.quarterTurns = turns
         shownTier = decoded?.tier
         CATransaction.commit()
     }
@@ -218,7 +235,8 @@ final class BrowserListView: NSView, BrowserContent, NSTableViewDataSource, NSTa
             let rows = table.rows(in: table.visibleRect)
             for row in rows.lowerBound..<rows.upperBound where row < result.count && result.assetIDs[row] == asset.rawValue {
                 if let cell = table.view(atColumn: 0, row: row, makeIfNecessary: false) as? ListCell {
-                    cell.show(asset: asset.rawValue, thumbnail: thumbnail, placeholder: nil)
+                    cell.show(
+                        asset: asset.rawValue, thumbnail: thumbnail, placeholder: nil, turns: result.quarterTurns(row))
                 }
             }
         }
@@ -469,7 +487,7 @@ final class BrowserListView: NSView, BrowserContent, NSTableViewDataSource, NSTa
                 blue: CGFloat(value & 255) / 255, alpha: 1)
         }
         let cached = loader.cache.nearest(asset: assetID, wanted: .small)
-        cell.show(asset: asset, thumbnail: cached, placeholder: color)
+        cell.show(asset: asset, thumbnail: cached, placeholder: color, turns: result.quarterTurns(row))
         guard cached == nil else { return }
         loader.request(
             ThumbnailRequest(

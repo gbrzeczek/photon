@@ -11,12 +11,16 @@ public struct CopiedFile: Sendable, Equatable {
     public var asset: AssetID
     public var instance: FileInstanceID
     public var isVideo: Bool
+    /// Non-destructive rotation, in clockwise quarter turns. Image data is turned to match what shows.
+    /// The file itself is the original, untouched.
+    public var quarterTurns: Int
 
-    public init(url: URL?, asset: AssetID, instance: FileInstanceID, isVideo: Bool) {
+    public init(url: URL?, asset: AssetID, instance: FileInstanceID, isVideo: Bool, quarterTurns: Int = 0) {
         self.url = url
         self.asset = asset
         self.instance = instance
         self.isVideo = isVideo
+        self.quarterTurns = quarterTurns
     }
 }
 
@@ -152,9 +156,10 @@ public enum PasteboardImage {
     /// original.
     public static let maximumEdge = 4096
 
-    /// Encodes as `type`, upright and in the photo's own color space. HDR is tone mapped to SDR, because
-    /// a PNG or TIFF that other apps can read has nowhere to keep it.
-    public static func encode(_ data: Data, as type: NSPasteboard.PasteboardType) -> Data? {
+    /// Encodes as `type`, upright and in the photo's own color space, then turned clockwise by
+    /// `quarterTurns`. HDR is tone mapped to SDR, because a PNG or TIFF that other apps can read has
+    /// nowhere to keep it.
+    public static func encode(_ data: Data, as type: NSPasteboard.PasteboardType, quarterTurns: Int = 0) -> Data? {
         guard let identifier = UTType(type.rawValue)?.identifier else { return nil }
         let options = [kCGImageSourceShouldCache: false] as CFDictionary
         guard let source = CGImageSourceCreateWithData(data as CFData, options) else { return nil }
@@ -166,14 +171,39 @@ public enum PasteboardImage {
                 maximumEdge, PhotoDecoder.longEdge(of: source) ?? maximumEdge),
             kCGImageSourceDecodeRequest: kCGImageSourceDecodeToSDR,
         ]
-        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions as CFDictionary) else {
-            return nil
-        }
+        guard let upright = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions as CFDictionary),
+            let image = turned(upright, quarterTurns: quarterTurns)
+        else { return nil }
         let output = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(output, identifier as CFString, 1, nil) else {
             return nil
         }
         CGImageDestinationAddImage(destination, image, nil)
         return CGImageDestinationFinalize(destination) ? output as Data : nil
+    }
+
+    /// `image` turned clockwise, drawn into a new bitmap in its own color space.
+    static func turned(_ image: CGImage, quarterTurns: Int) -> CGImage? {
+        let turns = (quarterTurns % 4 + 4) % 4
+        guard turns != 0 else { return image }
+        let (width, height) = turns % 2 == 1 ? (image.height, image.width) : (image.width, image.height)
+        let space = image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil } ?? CGColorSpace(name: CGColorSpace.sRGB)!
+        let is16 = image.bitsPerComponent > 8
+        guard
+            let context = CGContext(
+                data: nil, width: width, height: height, bitsPerComponent: is16 ? 16 : 8, bytesPerRow: 0,
+                space: space,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                    | (is16 ? CGBitmapInfo.byteOrder16Little.rawValue : 0))
+        else { return nil }
+        // Core Graphics' y points up, so clockwise is a negative angle, about the new bitmap's center.
+        context.translateBy(x: CGFloat(width) / 2, y: CGFloat(height) / 2)
+        context.rotate(by: -CGFloat(turns) * .pi / 2)
+        context.draw(
+            image,
+            in: CGRect(
+                x: -CGFloat(image.width) / 2, y: -CGFloat(image.height) / 2, width: CGFloat(image.width),
+                height: CGFloat(image.height)))
+        return context.makeImage()
     }
 }

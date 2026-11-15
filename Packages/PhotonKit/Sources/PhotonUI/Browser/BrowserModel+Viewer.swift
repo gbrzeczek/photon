@@ -221,7 +221,9 @@ extension BrowserModel: ViewerHost {
                     URL(fileURLWithPath: $0).appending(path: row.path.string, directoryHint: .notDirectory)
                 }
                 files.append(
-                    CopiedFile(url: url, asset: row.assetID, instance: row.instanceID, isVideo: row.kind == .video))
+                    CopiedFile(
+                        url: url, asset: row.assetID, instance: row.instanceID, isVideo: row.kind == .video,
+                        quarterTurns: row.quarterTurns))
             }
             batch.removeAll(keepingCapacity: true)
         }

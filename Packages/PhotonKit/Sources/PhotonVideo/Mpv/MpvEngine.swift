@@ -47,6 +47,11 @@ final class MpvPlayback: VideoPlayback {
     private var core: MpvCore?
     private var isClosed = false
     private var paused = true
+    /// What `pause` was set to, until mpv reports it. mpv reports properties after the fact, so a report
+    /// from before a command would otherwise undo it, and `rate` would say paused while it plays.
+    private var pendingPause: Bool?
+    /// What mpv last reported for `pause`. Setting it to this again makes no report.
+    private var reportedPause = true
     private var speed: Float = 1
     private var atEnd = false
     private var seekCompletion: ((Bool) -> Void)?
@@ -215,7 +220,14 @@ final class MpvPlayback: VideoPlayback {
             notify()
         case .property(let name, let value):
             switch name {
-            case "pause": paused = value.flag ?? paused
+            case "pause":
+                let reported = value.flag ?? reportedPause
+                reportedPause = reported
+                if let pending = pendingPause, pending != reported {
+                    break  // From before the command. mpv's report of it is on its way.
+                }
+                pendingPause = nil
+                paused = reported
             case "speed": if let speed = value.double { self.speed = Float(speed) }
             case "duration": if let duration = value.double, duration.isFinite { self.duration = duration }
             case "eof-reached": atEnd = value.flag ?? false
@@ -286,17 +298,21 @@ final class MpvPlayback: VideoPlayback {
             atEnd = false
         }
         speed = rate
-        paused = false
         set("speed", String(format: "%.4f", rate))
-        set("pause", "no")
+        setPaused(false)
         notify()
     }
 
     func pause() {
         guard status == .ready else { return }
-        paused = true
-        set("pause", "yes")
+        setPaused(true)
         notify()
+    }
+
+    private func setPaused(_ value: Bool) {
+        paused = value
+        pendingPause = value == reportedPause ? nil : value
+        set("pause", value ? "yes" : "no")
     }
 
     func seek(to seconds: Double, exact: Bool) {
@@ -338,8 +354,7 @@ final class MpvPlayback: VideoPlayback {
 
     func step(frames: Int) {
         guard status == .ready, frames != 0 else { return }
-        paused = true
-        set("pause", "yes")
+        setPaused(true)
         let name = frames > 0 ? "frame-step" : "frame-back-step"
         for _ in 0..<min(abs(frames), 30) { command([name]) }
         notify()

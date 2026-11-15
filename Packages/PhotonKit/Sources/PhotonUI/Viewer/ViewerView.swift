@@ -66,6 +66,9 @@ final class ViewerView: NSView, NSDraggingSource {
     private var isVideo = false
     private var geometry = ViewerGeometry(viewport: .zero, imageSize: .zero, backingScale: 2)
     private var shownSurface: IOSurface?
+    /// The showing photo's non-destructive rotation, in clockwise quarter turns. `geometry` is in the
+    /// turned size, and `picture` holds the surface unturned, with a transform.
+    private var quarterTurns = 0
     private var shownTier: ShownTier = .none
     private var neighborDirection = 1
     private var settleTask: Task<Void, Never>?
@@ -264,7 +267,7 @@ final class ViewerView: NSView, NSDraggingSource {
             flightClip.isHidden = false
             flightPicture.contents = surface
             flightClip.frame = target
-            flightPicture.frame = CGRect(origin: .zero, size: target.size)
+            QuarterTurns.place(flightPicture, in: CGRect(origin: .zero, size: target.size), turns: quarterTurns)
         }
         let aspect = target.height > 0 ? target.width / target.height : 1
         let from = ViewerTransition.filled(tile, aspect: aspect)
@@ -337,7 +340,9 @@ final class ViewerView: NSView, NSDraggingSource {
             flightPicture.contents = surface
             flightClip.frame = tile
             let aspect = geometry.imageSize.height > 0 ? geometry.imageSize.width / geometry.imageSize.height : 1
-            flightPicture.frame = ViewerTransition.filled(tile, aspect: aspect).offsetBy(dx: -tile.minX, dy: -tile.minY)
+            QuarterTurns.place(
+                flightPicture, in: ViewerTransition.filled(tile, aspect: aspect).offsetBy(dx: -tile.minX, dy: -tile.minY),
+                turns: quarterTurns)
         }
         fade(backdrop, from: 1, to: 0, duration: Self.flightDuration)
         flightID += 1
@@ -395,17 +400,18 @@ final class ViewerView: NSView, NSDraggingSource {
 
     private func fly(clip: (from: CGRect, to: CGRect), picture: (from: CGRect, to: CGRect)) {
         move(flightClip, from: clip.from, to: clip.to)
-        move(flightPicture, from: picture.from, to: picture.to)
+        move(flightPicture, from: picture.from, to: picture.to, turns: quarterTurns)
     }
 
-    private func move(_ layer: CALayer, from: CGRect, to: CGRect) {
+    /// `from` and `to` are as they show, turned. Bounds are unturned, so they swap with an odd turn.
+    private func move(_ layer: CALayer, from: CGRect, to: CGRect, turns: Int = 0) {
         let group = CAAnimationGroup()
         let position = CABasicAnimation(keyPath: "position")
         position.fromValue = NSValue(point: CGPoint(x: from.midX, y: from.midY))
         position.toValue = NSValue(point: CGPoint(x: to.midX, y: to.midY))
         let bounds = CABasicAnimation(keyPath: "bounds")
-        bounds.fromValue = NSValue(rect: CGRect(origin: .zero, size: from.size))
-        bounds.toValue = NSValue(rect: CGRect(origin: .zero, size: to.size))
+        bounds.fromValue = NSValue(rect: CGRect(origin: .zero, size: QuarterTurns.unturned(from.size, turns)))
+        bounds.toValue = NSValue(rect: CGRect(origin: .zero, size: QuarterTurns.unturned(to.size, turns)))
         group.animations = [position, bounds]
         group.duration = Self.flightDuration
         group.timingFunction = Self.flightTiming
@@ -445,6 +451,7 @@ final class ViewerView: NSView, NSDraggingSource {
         if let previous, previous != next { thumbnails.cancel(previous.asset) }
         if video.asset != next.asset { video.stop() }
         isVideo = result.flags[row].contains(.video)
+        quarterTurns = result.quarterTurns(row)
         item = next
         shownSurface = nil
         shownTier = .none
@@ -588,8 +595,7 @@ final class ViewerView: NSView, NSDraggingSource {
             picture.contents = choice.surface
             shownSurface = choice.surface
             shownTier = choice.tier
-            let size = choice.size
-            geometry.imageSize = size
+            geometry.imageSize = QuarterTurns.turned(choice.size, quarterTurns)
             geometry.clampCenter()
             placePicture()
         }
@@ -611,9 +617,10 @@ final class ViewerView: NSView, NSDraggingSource {
         let frame = geometry.frame
         // On whole device pixels at fit, so that a preview made for this size lands pixel for pixel.
         let placed = geometry.isZoomedIn ? frame : backingAlignedRect(frame, options: .alignAllEdgesNearest)
-        picture.frame = frame.width > 0 ? placed : .zero
+        let shown = frame.width > 0 ? placed : .zero
+        QuarterTurns.place(picture, in: shown, turns: quarterTurns)
         picture.backgroundColor = shownSurface == nil ? placeholderColor : nil
-        video.place(frame: picture.frame)
+        video.place(frame: shown)
     }
 
     private var placeholderColor: CGColor? {
@@ -634,10 +641,35 @@ final class ViewerView: NSView, NSDraggingSource {
             show(row: row, isRepeat: false)
         } else {
             self.row = row
+            let turns = result.quarterTurns(row)
+            if turns != quarterTurns { turn(to: turns) }
             updateAccessibility()
             applyStatus()
             host.viewerDidSettle(row: row)
         }
+    }
+
+    /// The photo showing was rotated. It goes back to fit, as in Photos, keeping what's decoded.
+    private func turn(to turns: Int) {
+        let change = QuarterTurns.normalized(turns - quarterTurns)
+        let unturned = QuarterTurns.unturned(geometry.imageSize, quarterTurns)
+        quarterTurns = turns
+        withoutAnimation {
+            geometry.zoom = 1
+            geometry.center = CGPoint(x: 0.5, y: 0.5)
+            geometry.imageSize = QuarterTurns.turned(unturned, turns)
+            placePicture()
+        }
+        guard !reducesMotion, !isFlying else { return }
+        // Turns from where it was to where it is now, the shorter way round, on top of the new transform.
+        let delta = change == 3 ? -CGFloat.pi / 2 : CGFloat(change) * .pi / 2
+        let animation = CABasicAnimation(keyPath: "transform.rotation.z")
+        animation.isAdditive = true
+        animation.fromValue = -delta
+        animation.toValue = 0
+        animation.duration = Self.fadeDuration
+        animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        picture.add(animation, forKey: "turn")
     }
 
     private func applyStatus() {
@@ -793,8 +825,16 @@ final class ViewerView: NSView, NSDraggingSource {
             pan?.last = point
         } else if let press = dragPress, hypot(point.x - press.x, point.y - press.y) >= 4 {
             let frame = shownSurface == nil ? CGRect(x: press.x - 32, y: press.y - 32, width: 64, height: 64) : geometry.frame
-            host?.viewerBeginDrag(event: event, frame: frame, contents: shownSurface ?? videoSymbol.contents)
+            host?.viewerBeginDrag(event: event, frame: frame, contents: dragContents)
         }
+    }
+
+    /// What a drag shows. A turned photo is drawn from its thumbnail, since turning a full-resolution
+    /// image for a drag image would hold the main thread.
+    private var dragContents: Any? {
+        guard quarterTurns != 0, let item else { return shownSurface ?? videoSymbol.contents }
+        let small = thumbnails.cache.nearest(asset: item.asset, wanted: .large)?.surface ?? shownSurface
+        return QuarterTurns.image(small, turns: quarterTurns)
     }
 
     override func mouseUp(with event: NSEvent) {
