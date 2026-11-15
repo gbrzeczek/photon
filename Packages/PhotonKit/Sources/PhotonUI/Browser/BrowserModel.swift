@@ -107,6 +107,7 @@ public final class BrowserModel {
     public internal(set) var notice: String?
 
     @ObservationIgnored let library: BrowserLibrary
+    @ObservationIgnored let settings: AppSettings
     @ObservationIgnored let selection = SelectionModel()
     @ObservationIgnored let pages: RowPageCache
     @ObservationIgnored private(set) var result = BrowseResult.empty
@@ -144,8 +145,10 @@ public final class BrowserModel {
     /// How often the library may be queried again while indexing changes it.
     private static let contentReloadInterval: Duration = .seconds(2)
 
-    public init(library: BrowserLibrary) {
+    public init(library: BrowserLibrary, settings: AppSettings = .shared) {
         self.library = library
+        self.settings = settings
+        layoutMode = settings.keepsAspectRatio ? .aspect : .square
         pages = RowPageCache(store: library.store)
         library.onContentChanged = { [weak self] in self?.contentChanged() }
         library.onVolumesChanged = { [weak self] in self?.volumesChanged() }
@@ -214,6 +217,12 @@ public final class BrowserModel {
             let session = try? await library.store.session(for: source)
             guard let session else {
                 self.source = source
+                // A source opened for the first time takes the view chosen in Settings. Focus stays
+                // where it is, because the sidebar may have opened it.
+                if self.viewMode != self.settings.newSourceViewMode {
+                    self.viewMode = self.settings.newSourceViewMode
+                    self.showMode?(self.viewMode)
+                }
                 self.search = ""
                 self.selection.reset()
                 self.reload(keepPosition: false)
@@ -449,6 +458,7 @@ public final class BrowserModel {
     public func setLayoutMode(_ mode: TileLayoutMode) {
         guard mode != layoutMode else { return }
         layoutMode = mode
+        if settings.keepsAspectRatio != (mode == .aspect) { settings.keepsAspectRatio = mode == .aspect }
         grid?.layoutModeDidChange()
     }
 

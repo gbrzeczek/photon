@@ -13,7 +13,9 @@ import UniformTypeIdentifiers
 /// `PHOTON_VIEWER_SCROLL` that many wheel notches. `PHOTON_INSPECTOR=<row>` selects that row and shows the
 /// inspector, for looking at it the same way. `PHOTON_HOVER_ROW=<row>` rests the pointer on that tile
 /// after 2 seconds, so that a video's preview plays in it. `PHOTON_VIDEO_PANEL=volume` or `speed` opens
-/// that panel above a video's bar in the viewer, a second after it opens.
+/// that panel above a video's bar in the viewer, a second after it opens. `PHOTON_OPEN_WINDOW` opens
+/// `settings`, `storage` (Settings on its Storage pane), `keyboard-shortcuts` or `acknowledgements` at
+/// launch, and `PHOTON_SNAPSHOT` then saves that window instead of the browser.
 @MainActor
 enum DevelopmentHooks {
     static func applyAppearance() {
@@ -86,7 +88,9 @@ enum DevelopmentHooks {
         guard let path = environment["PHOTON_SNAPSHOT"] else { return }
         let delay = environment["PHOTON_SNAPSHOT_DELAY"].flatMap(Double.init) ?? 3
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak view] in
-            guard let window = view?.window else { return }
+            let other = environment["PHOTON_OPEN_WINDOW"] != nil
+                ? NSApplication.shared.windows.first { $0.isVisible && $0 !== view?.window && $0.title != "" } : nil
+            guard let window = other ?? view?.window else { return }
             save(window: window, to: URL(fileURLWithPath: path))
             // Above 1 means the display is showing extended range now, which no screenshot can show.
             let headroom = window.screen?.maximumExtendedDynamicRangeColorComponentValue ?? 0

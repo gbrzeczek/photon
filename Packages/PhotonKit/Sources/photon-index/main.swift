@@ -18,13 +18,15 @@ let usage = """
       photon-index videos <folder> [--seconds <n>] [--width <n>] [--height <n>]
       photon-index thumbnails <folder> [--database <file>] [--json <file>]
       photon-index seed --database <file> [--count <n>] [--seed <n>]
+      photon-index showcase <folder> [--count <n>]
 
     thumbnails makes every thumbnail for a folder that has been scanned, reading it the way scan does.
     seed writes a library with no real files, for measuring the grid. Its volume is always offline.
     scan refuses an external volume unless it's mounted read-only.
     videos writes the format test set: one real, playable clip per format AVFoundation writes, and the
     fallback's clips in MKV, WebM, AVI and the other formats only mpv plays.
-    generate and videos only write to the internal disk or a disk image.
+    showcase writes drawn landscapes, for screenshots, since real photos can't be shown.
+    generate, videos and showcase only write to the internal disk or a disk image.
     """
 
 func fail(_ message: String) -> Never {
@@ -131,6 +133,12 @@ func runGenerate(path: String) throws {
             + "\(manifest.duplicates) duplicates, \(manifest.bytes) bytes")
 }
 
+func runShowcase(path: String) async throws {
+    let root = URL(fileURLWithPath: path)
+    let manifest = try SyntheticScenes.generate(at: root, count: option("--count").flatMap(Int.init) ?? 120)
+    print("\(manifest.photos) photos")
+}
+
 func runVideos(path: String) async throws {
     let root = URL(fileURLWithPath: path)
     try SyntheticLibrary.ensureSafeLocation(root)
@@ -208,6 +216,7 @@ do {
     case ("videos", let path?): try await runVideos(path: path)
     case ("thumbnails", let path?): try await runThumbnails(path: path)
     case ("seed", _): try await runSeed()
+    case ("showcase", let path?): try await runShowcase(path: path)
     default: fail(usage)
     }
 } catch {

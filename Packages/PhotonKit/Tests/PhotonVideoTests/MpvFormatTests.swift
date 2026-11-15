@@ -55,7 +55,8 @@ private final class FallbackFixture: Sendable {
 }
 
 @MainActor
-private func until(timeout: Duration = .seconds(10), _ condition: () -> Bool) async -> Bool {
+/// Generous by default, for CI's loaded virtual Macs. A condition that's met returns at once.
+private func until(timeout: Duration = .seconds(30), _ condition: () -> Bool) async -> Bool {
     let deadline = ContinuousClock.now + timeout
     while !condition() {
         if ContinuousClock.now > deadline { return false }

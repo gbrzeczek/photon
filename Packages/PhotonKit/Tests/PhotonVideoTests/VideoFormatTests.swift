@@ -62,7 +62,8 @@ private final class VideoFixture: Sendable {
 
 /// Waits for a condition that the main thread's run loop brings about.
 @MainActor
-private func until(timeout: Duration = .seconds(10), _ condition: () -> Bool) async -> Bool {
+/// Generous by default, for CI's loaded virtual Macs. A condition that's met returns at once.
+private func until(timeout: Duration = .seconds(30), _ condition: () -> Bool) async -> Bool {
     let deadline = ContinuousClock.now + timeout
     while !condition() {
         if ContinuousClock.now > deadline { return false }
@@ -162,8 +163,9 @@ struct VideoFormatTests {
 
         playback.isMuted = true
         playback.play(rate: 1)
-        // Generous, because CI's virtual Macs decode HEVC in software while other suites run.
-        #expect(await until(timeout: .seconds(30)) { playback.currentTime > 0.3 }, "Stuck at \(playback.currentTime)")
+        // Generous, because CI's virtual Macs decode HEVC in software while other suites run, and an H.264
+        // M4V once took longer than 30 seconds to start there.
+        #expect(await until(timeout: .seconds(60)) { playback.currentTime > 0.3 }, "Stuck at \(playback.currentTime)")
         playback.pause()
         playback.seek(to: 1.5, exact: true)
         #expect(await until { abs(playback.currentTime - 1.5) < 0.05 })

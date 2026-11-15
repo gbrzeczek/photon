@@ -2,7 +2,7 @@
 
 Photon is a native macOS browser for photos and videos stored in local folders and on removable media. This document records the product scope, architecture, milestones and open risks.
 
-**Status:** Milestone 6, video, is built: AVFoundation and Photon's own LGPL build of libmpv play, thumbnail and scrub both halves of the format test set through the I/O scheduler, on the internal disk and on exFAT disk images. Live Photo motion and play and pause in the menu bar aren't built. See [Milestone 6 results](#milestone-6-results). Milestone 5, organization, is built, and favorites survive moving a library to a new drive on disk images. See [Milestone 5 results](#milestone-5-results). Milestone 4 is built and checked on disk images, with no physical pull by the user's decision, and measured on a real screen on a seeded 100k library and on the T7 Touch's real library of 27,235 assets. See [Milestone 4 results](#milestone-4-results), [Milestone 3 results](#milestone-3-results) and [Milestone 2 results](#milestone-2-results). The drive doesn't hold 100k files, so those two libraries together stand in for a 100k library on the drive. Spike code lives in [`Spikes/`](../Spikes/README.md), and results are under [Milestone 0 spikes](#milestone-0-spikes) and [Milestone 1 results](#milestone-1-results).
+**Status:** Milestone 7b, polish, is built: Settings, a welcome for an empty library, a notice when macOS refuses a drive, Help's Keyboard Shortcuts and Acknowledgements, About Photon, and scripted screenshots for the README. See [Settings, welcome and help](#settings-welcome-and-help) and [Milestone 7b results](#milestone-7b-results). Milestone 6, video, is built: AVFoundation and Photon's own LGPL build of libmpv play, thumbnail and scrub both halves of the format test set through the I/O scheduler, on the internal disk and on exFAT disk images. Live Photo motion and play and pause in the menu bar aren't built. See [Milestone 6 results](#milestone-6-results). Milestone 5, organization, is built, and favorites survive moving a library to a new drive on disk images. See [Milestone 5 results](#milestone-5-results). Milestone 4 is built and checked on disk images, with no physical pull by the user's decision, and measured on a real screen on a seeded 100k library and on the T7 Touch's real library of 27,235 assets. See [Milestone 4 results](#milestone-4-results), [Milestone 3 results](#milestone-3-results) and [Milestone 2 results](#milestone-2-results). The drive doesn't hold 100k files, so those two libraries together stand in for a 100k library on the drive. Spike code lives in [`Spikes/`](../Spikes/README.md), and results are under [Milestone 0 spikes](#milestone-0-spikes) and [Milestone 1 results](#milestone-1-results).
 
 ## Product scope
 
@@ -190,7 +190,7 @@ First-time indexing takes about 30 minutes per 100k photos at full speed, and ab
 - The main thread takes a bounded batch of decoded thumbnails per frame, so that a backlog can't flood it.
 - During fast scrolling, tiles show the stored dominant color and skip decoding.
 - The rough cost is 2–5 GB per 100k photos, so a large drive could use 25 GB or more.
-- The cache has a size limit, 20 GB for now. Small thumbnails are kept for every asset, and large packs are evicted whole, least recently used first, with favorites last. Replaced thumbnails leave unused bytes in their pack until it goes, since nothing compacts packs yet.
+- The cache has a size limit, chosen in Settings from 5 to 100 GB, and 20 GB by default. A lower limit evicts at once. Small thumbnails are kept for every asset, and large packs are evicted whole, least recently used first, with favorites last. Replaced thumbnails leave unused bytes in their pack until it goes, since nothing compacts packs yet.
 - **Video tiles** show a frame from about a second in, or halfway through a shorter clip, at the nearest keyframe, which decodes one frame. The first frame is often black. They keep the duration badge. A video gets no embedded preview stage, so the first pass reads nothing for it. A format no engine here decodes is marked failed without a read, and keeps the film symbol. Migration v6 cleared every failed video when the fallback arrived, so each gets one more try.
 - **The fallback's frames** come from mpv's software renderer, which applies the pixel aspect and rotation as playback does. AVFoundation goes first for its own formats, and mpv takes what it opened and couldn't decode, such as VP9 in MP4. MPEG program and transport streams land on the keyframe after the time asked for, rather than before it.
 - **Offline**, stored thumbnails show as usual. Anything missing keeps its dominant color, or a neutral fill, and nothing fails.
@@ -208,7 +208,7 @@ First-time indexing takes about 30 minutes per 100k photos at full speed, and ab
 - If capture dates arrive during a sort, the list re-sorts around the anchor so that the view doesn't jump. While indexing, the query runs at most every 2 seconds, and everything proportional to the library happens off the main thread: the query, the layout pass, and the map from old rows to new ones.
 - Selection is ranges of rows, so selecting 100k items costs one range. The map above carries it across a change of order.
 - **Rubber band.** As in Finder and Photos, a plain drag on a tile drags the file, selecting the tile first if it wasn't, and a plain drag from a gap draws a band. Tiles nearly fill the view, so Shift or Command starts a band on any tile too, and keeps what was already selected. A plain click on one of several selected tiles narrows the selection only when the button comes up, because the press could still be a drag. Holding the pointer past the top or bottom scrolls, faster the further past. Tiles on screen check the rectangle directly, and the rows are worked out once, off the main thread, when the button comes up, so a band over the whole library costs only what's visible on each frame. The status bar's count catches up then too.
-- **Hover previews.** A video plays in its tile once the pointer has rested on it for 0.6 seconds, muted and looping, as in Photos. Only one plays at a time. It starts from the poster frame, which the tile already shows, and its layer only appears once a frame is ready and playback has moved past where the seek landed, so the tile never jumps or flashes black. A finished seek alone isn't enough: the layer can still be empty, or on the first frame, and both draw black. Stopping takes the layer off the tile before the player lets go of it. Scrolling, zooming, a press, a key, a rubber band or opening the viewer stops it, and nothing starts while the grid is moving. A reload, which indexing makes every couple of seconds, keeps it playing if its video is still on screen. Reduce Motion turns previews off, and Settings should get a switch for them in Milestone 7. An offline video, or a format no engine plays, gets none. The keyboard has no equivalent, by choice: playing the current tile would play while you browse the photos beside it. The list has none, because its thumbnails are too small to show motion.
+- **Hover previews.** A video plays in its tile once the pointer has rested on it for 0.6 seconds, muted and looping, as in Photos. Only one plays at a time. It starts from the poster frame, which the tile already shows, and its layer only appears once a frame is ready and playback has moved past where the seek landed, so the tile never jumps or flashes black. A finished seek alone isn't enough: the layer can still be empty, or on the first frame, and both draw black. Stopping takes the layer off the tile before the player lets go of it. Scrolling, zooming, a press, a key, a rubber band or opening the viewer stops it, and nothing starts while the grid is moving. A reload, which indexing makes every couple of seconds, keeps it playing if its video is still on screen. Reduce Motion turns previews off, and so does the switch in Settings. An offline video, or a format no engine plays, gets none. The keyboard has no equivalent, by choice: playing the current tile would play while you browse the photos beside it. The list has none, because its thumbnails are too small to show motion.
 - **The list stays alive but idle while hidden.** A hidden `NSTableView` still lays out rows and makes cells, and that cost the grid hitches of up to 46 ms. It takes the result and the selection when it next shows.
 
 ### Viewer
@@ -232,7 +232,7 @@ First-time indexing takes about 30 minutes per 100k photos at full speed, and ab
 - **HDR** decodes with `kCGImageSourceDecodeToHDR` into half-float pixels in extended linear P3. The surface is tagged with `kIOSurfaceContentHeadroom`, and the layer sets `preferredDynamicRange = .high`, so extended range is only used for photos that have it. Thumbnails stay SDR, so an HDR photo brightens when its preview lands.
 - **Transitions** fly in Core Animation, from the tile's crop to the whole photo and back, so they don't depend on the main thread. Reduce Motion replaces them with a fade.
 - **Offline**, or if the file changed, the thumbnail stays and nothing fails. Moving on works as usual.
-- **Permission.** A build with no stable signature, started by Launch Services, may not get removable-volume access, and then reads fail with the same quiet result, so the viewer stays on thumbnails with no explanation. Milestone 7's signing should settle this. If it doesn't, this needs a message of its own.
+- **Permission.** A build with no stable signature, started by Launch Services, may not get removable-volume access, and then reads fail with the same quiet result, so the viewer stays on thumbnails. Milestone 7a's signing keeps a grant across releases. When access is refused anyway, the scan can't list the folder's root, and the status bar says so, with a link to System Settings. See [Settings, welcome and help](#settings-welcome-and-help).
 - **Videos** fly in from their tile like photos, on their stored thumbnail, and the player's layer only appears over it once it has a frame, so nothing flashes black. A player opens once the viewer has settled, so a held key passes videos without opening any, and it starts playing at once. Moving on or closing stops it, and the flight back carries the thumbnail. Zoom is off for videos. See [Video](#video) for the controls.
 - **Rotation** is applied as a layer transform, and the flights carry it. See [Rotation](#rotation).
 
@@ -339,7 +339,7 @@ Keyboard navigation is built alongside the grid, list and viewer, not added duri
 - Holding an arrow key must feel smooth. Repeats are coalesced, skipped items cancel their decoding, and tiles show the nearest thumbnail at once.
 - Offline items can be navigated like any other, and show their thumbnail in the viewer.
 - Tab and Shift-Tab move focus between the sidebar, content and inspector.
-- Common actions appear in the menu bar with their shortcuts, so that they're discoverable.
+- Common actions appear in the menu bar with their shortcuts, so that they're discoverable, and Help → Keyboard Shortcuts lists the table below. A test checks that window against this table, row for row.
 - Shortcuts are tested on non-US keyboard layouts.
 
 **Shortcuts.** Some rows have no effect yet: rename and trash need the file operations layer. The checks against Photos and Finder, and on non-US layouts, haven't been done.
@@ -385,6 +385,31 @@ The Video menu offers play and pause, the skips, mute and the speeds with these 
 Space closes a photo in the viewer, so it works as a quick look toggle. For videos it plays and pauses, and Escape closes. J and L each double the speed in their direction up to 8×, as in editing apps, and J only plays backward where AVFoundation can. A click on a video plays or pauses it, and a double click enters or leaves full screen, as in QuickTime Player. Letters are matched by character, like Period.
 
 The viewer also takes a pinch, a mouse wheel or a scroll with Command or Option held to zoom, the toolbar's zoom buttons, a double click or two-finger double tap to toggle actual size, dragging or a trackpad scroll to pan when zoomed in, and a two-finger swipe to the next photo at fit. Double-clicking a tile or row opens it. In the grid, a scroll with Command or Option held changes the tile size. These need the mouse or trackpad, and everything they do has a key.
+
+### Settings, welcome and help
+
+Milestone 7b. The polish that daily use needs, scoped with the user: Settings, a welcome, a notice when macOS refuses a drive, the Help menu, About Photon, and screenshots. Accessibility, the shortcut checks against Photos, Finder and other keyboard layouts, and Rename and Move to Trash were left for later.
+
+**Settings**, Photon → Settings or Command-Comma, has two panes:
+
+| Pane | Setting | Default |
+|---|---|---|
+| General | Show new folders as tiles or a list. A folder, album or tag opens this way the first time, and keeps its own session after | Tiles |
+| General | Keep aspect ratio in tiles. The View menu's Keep Aspect Ratio changes the same setting, so it now lasts across launches | Off |
+| General | Reopen the viewer at launch if it was open | On |
+| General | Play videos when the pointer rests on them. Reduce Motion turns them off whatever this says, and the pane says so | On |
+| Storage | Thumbnail cache limit: 5, 10, 20, 50 or 100 GB, with what's in use beside it | 20 GB |
+| Storage | Show the library in Finder, with a line saying it's on this Mac and nothing is written to drives | |
+
+Settings live in user defaults, on the internal disk. A launch with any `PHOTON_` variable uses a domain of its own, `app.photon.Photon.development`, so a test or measurement never changes the user's settings, and `PHOTON_RESET_SETTINGS` empties it. Anything that isn't the app, such as the package's tests, keeps settings in memory. Measurements stay in square tiles whatever the development domain says.
+
+**Welcome.** An empty library shows what Photon does with files, with Add Folder… as the default button, so Return chooses a folder, and a folder can be dropped on it. It says that macOS will ask about an external drive, and to click Allow. It has no state of its own: it goes when the library has a folder, and waits until the library's folders have been read, so it never flashes at launch.
+
+**Refused access.** When macOS won't let Photon list the root of a library folder, with `EPERM` or `EACCES`, the scan reports it (`ScanReport.isRootDenied`), keeps every file as before, and the status bar says "Photon isn't allowed to read “Name”" with Open Privacy Settings…, which opens Privacy & Security at Files & Folders. The next scan that can list the root clears it. Disk images aren't gated by TCC, so this is tested with injected `EPERM`, and a real refusal hasn't been seen.
+
+**Help** replaces the system's empty help book with Keyboard Shortcuts, Acknowledgements and Photon on GitHub. Keyboard Shortcuts groups the [shortcut table](#keyboard-navigation) by where each works, writes keys as the menus do (⇧⌘A), and leaves out rows that aren't built. Acknowledgements lists GRDB's MIT license, then each license the libmpv build put in `Contents/Resources/Licenses/libmpv`, and its manifest of versions, so a build without the fallback lists only what it contains. **About Photon** is the standard panel, with what Photon promises about files, what it includes, and a link to the repository.
+
+**Screenshots.** `scripts/screenshots/make.sh` builds the app, writes 120 drawn landscapes with `photon-index showcase`, indexes them into a temporary library, and captures the grid, the viewer, the welcome, Settings and Keyboard Shortcuts in light and dark into `docs/screenshots`, which the README shows. Real photos are never used.
 
 ### Video
 
@@ -517,7 +542,7 @@ Asked for by the user, ahead of the remaining milestones. All built, and listed 
 | 6 | **Video:** AVPlayer, fallback engine, thumbnails, scrub previews | A format test set plays and shows thumbnails |
 | 6a | **Rotation:** non-destructive quarter turns of photos, in grid, list and viewer | A photo turns from the keyboard in grid and viewer, shows turned everywhere, and its file is untouched |
 | 7a | **Release pipeline:** signed DMG built by GitHub Actions on every push to main | A push to main that passes CI becomes a tagged release on GitHub, with a DMG signed by the self-signed certificate |
-| 7b | **Polish:** accessibility, Settings, onboarding, screenshots | Ready for daily use |
+| 7b | **Polish:** Settings, onboarding, help, screenshots. Accessibility was left for later | Ready for daily use |
 | 8 | **Duplicates:** near-duplicate detection, similar-scene stacks | Similar scenes collapse into one browsable tile |
 | 9 | **Cloud backup:** JSON export keyed by hash, then encrypted backup of originals | Favorites can be restored after losing a drive |
 | 10 | **Faces:** detection, bundled embedding model, clustering, correction UI | People can be browsed and corrected |
@@ -665,6 +690,32 @@ The tool was first validated on an exFAT disk image, and those numbers are in `S
 - **Why it works:** a self-signed certificate gives a designated requirement of bundle identifier plus certificate, which stayed identical across rebuilds. Ad-hoc signing gives a `cdhash` requirement, which changes on every build.
 - **Also confirmed:** `codesign` works with an untrusted certificate when given its SHA-1 hash and keychain, so CI doesn't need to trust it. Local builds ran, even though `spctl` rejects them.
 - **Testing note:** disk images aren't gated by TCC at all, so this check always needs a real drive.
+
+### Milestone 7b results
+
+Built as described in [Settings, welcome and help](#settings-welcome-and-help). The scope was agreed with the user from what this plan promised for polish: Settings, onboarding and screenshots, with About and the Help menu added. Accessibility, the shortcut checks on other layouts and against Photos and Finder, and Rename and Move to Trash weren't chosen, so they stay open.
+
+**Tests:** 507 Swift Testing tests pass without libmpv, as CI runs them. New ones check that settings persist and fall back for values the window doesn't offer, that tests and measurements never reach the user's settings, that Keep Aspect Ratio and the first view of a new source follow Settings, that the hover preview switch stops and starts previews, that a lowered cache limit evicts large packs and the count follows, that a root refused with `EPERM` is reported, keeps its files and clears, through the indexer and through Add Folder, that the Keyboard Shortcuts window matches this plan's table row for row, how keys are written, and how acknowledgements are read. `PolishUITests` adds XCUITests for Command-Comma, the Help menu's two windows, and Return on the welcome opening the folder panel.
+
+**Light and dark**, by window capture from the running app on a showcase library: the grid, the viewer, the welcome, both Settings panes, Keyboard Shortcuts and Acknowledgements. All read clearly. These captures are the README's screenshots.
+
+**Performance:** one pass with `PHOTON_PERF_OUT` on the seeded 100k library, release build, on the external display at a backing scale of 1, then a repeat for launch. The grid scenarios ran at 120 fps with no missed frame and a worst main-thread frame of 4.0 ms. List scrolling ran at 118.8 fps with a worst frame of 4.3 ms, and the viewer's arrows at 116.6 fps. Launch took 1,330 ms on the new binary's first run and 439 ms to the result, 511 ms to the frame, on the second, as at Milestone 6a, where `main` took 434 ms on the same library. Switching to the list took 18.4 ms once on the first run and 3.9 ms on the second, and opening the viewer 14.2 ms once and 3.5 ms on the second, so neither repeated. The grid gains one closure call per pointer movement, and launch reads five settings.
+
+What building it found, and fixed:
+
+- **A layout loop crashed the app** when the appearance changed with the welcome showing: `.fixedSize(horizontal: false, vertical: true)` on wrapping text inside the window's detail made AppKit raise an exception. It showed with `PHOTON_APPEARANCE`, which sets the appearance after the window exists, and would have shown for anyone switching to dark mode on an empty library. The welcome and the new windows don't use it.
+- **The empty state flashed at every launch**, before the library's folders had been read. It now waits for them.
+- **An identifier on a SwiftUI container replaces its children's**, so the welcome's button couldn't be found by its own. The container now contains its elements.
+- **The synthetic photos were noise and stripes**, which made poor screenshots, so `SyntheticScenes` draws landscapes.
+
+**CI fixes.** This PR's first run failed four timing checks it didn't touch, and `main`'s last run had failed two others: three indexer and scheduler checks timed out together after 10 seconds, as if the whole test process had been starved, an H.264 M4V took more than 30 seconds to start playing, an MPEG-TS seek didn't report back in 10 seconds, and the inspector test read the sidebar's tags before they reloaded. The index tests' `eventually` and the video tests' `until` now wait up to 30 seconds by default, the M4V up to 60, and the tags test waits for the reload. A condition that's met returns at once, and no test expects one of these waits to run out.
+
+**Not verified:**
+
+- A real refusal of removable-volume access, which disk images can't produce. It's tested with injected `EPERM`.
+- The XCUITests' final run. Keyboard Shortcuts and Acknowledgements passed through the Help menu. During the run a system authorization window from `SecurityAgent` was open on the screen, and the Settings test's click on the Storage pane fell inside it, so that test, and the welcome test, which failed on the identifier above, weren't rerun while it was there.
+- VoiceOver on the new windows, and Reduce Motion's note in Settings on a real screen.
+- Dropping a folder on the welcome, and the About panel, which were only built.
 
 ### Milestone 6a results
 

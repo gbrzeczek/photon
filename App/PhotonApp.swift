@@ -9,5 +9,20 @@ struct PhotonApp: App {
         }
         .defaultSize(width: 1280, height: 800)
         .commands { PhotonCommands() }
+
+        Settings {
+            PhotonSettingsView()
+        }
+
+        Window("Keyboard Shortcuts", id: PhotonWindowID.keyboardShortcuts) {
+            KeyboardShortcutsView()
+        }
+        .windowResizability(.contentMinSize)
+        .defaultPosition(.center)
+
+        Window("Acknowledgements", id: PhotonWindowID.acknowledgements) {
+            AcknowledgementsView()
+        }
+        .defaultPosition(.center)
     }
 }

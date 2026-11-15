@@ -54,7 +54,8 @@ final class BrowserFixture {
         _ = try await store.applyIndexed(indexed)
 
         await library.start()
-        model = BrowserModel(library: library)
+        // Settings of its own, in memory, so that a test changing one reaches no other.
+        model = BrowserModel(library: library, settings: AppSettings(defaults: nil))
         if aspectLayout { model.setLayoutMode(.aspect) }
         container = BrowserContainerView(model: model)
         window = NSWindow(

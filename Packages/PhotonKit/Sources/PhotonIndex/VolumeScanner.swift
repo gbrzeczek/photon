@@ -11,6 +11,9 @@ public struct ScanReport: Hashable, Sendable {
     public var unchanged = 0
     /// Directories that couldn't be listed, so nothing under them was treated as deleted.
     public var unreadableDirectories = 0
+    /// The root itself couldn't be listed, with `EPERM` or `EACCES`. On an external drive that usually
+    /// means macOS hasn't allowed Photon to read removable volumes.
+    public var isRootDenied = false
     public init() {}
 
     mutating func add(_ changes: DirectoryChanges) {
@@ -54,6 +57,7 @@ struct VolumeScanner {
                 continue
             } catch VolumeIOError.system(_, let code) where Self.isPerDirectory(code) {
                 report.unreadableDirectories += 1
+                if directory == root { report.isRootDenied = true }
                 unreadable.append(directory)
                 continue
             }

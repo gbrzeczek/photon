@@ -25,7 +25,12 @@ public final class BrowserLibrary {
     public private(set) var ejectableVolumes: Set<VolumeID> = []
     /// Something about a connected drive that stays true for as long as it's connected.
     public private(set) var volumeNotice: String?
+    /// Volumes whose folders macOS wouldn't let Photon list, at the last scan. Usually removable-volume
+    /// access that was refused, which only the user can change, in System Settings.
+    public private(set) var deniedVolumes: Set<VolumeID> = []
     public private(set) var isIndexing = false
+    /// The library's folders have been read once, so an empty list really means none.
+    public private(set) var hasLoadedFolders = false
     public private(set) var activity = ""
     public private(set) var lastError: String?
 
@@ -37,7 +42,7 @@ public final class BrowserLibrary {
     @ObservationIgnored let pasteboard: MediaPasteboard
     @ObservationIgnored let videoEngines = VideoEngines.standard
     @ObservationIgnored private var hasLoadedExpansion = false
-    @ObservationIgnored private var packs: ThumbnailPackStore
+    @ObservationIgnored private let packs: ThumbnailPackStore
     @ObservationIgnored private var monitor: VolumeEventMonitor?
     @ObservationIgnored private var backgroundTasks: [VolumeID: Task<Void, Never>] = [:]
     @ObservationIgnored private var rescanTasks: [VolumeID: Task<Void, Never>] = [:]
@@ -70,14 +75,17 @@ public final class BrowserLibrary {
     ///     nothing but the user's own click can reach a real drive.
     ///   - options: For tests, which inject failures here.
     public init(
-        _ handle: LibraryHandle, ejectScope: EjectScope = .diskImagesOnly, options: IndexOptions = defaultOptions
+        _ handle: LibraryHandle, ejectScope: EjectScope = .diskImagesOnly, options: IndexOptions = defaultOptions,
+        thumbnailCacheByteLimit: Int64? = nil
     ) {
         let store = handle.store
         self.store = store
         ejector = VolumeEjector(scope: ejectScope)
         let indexer = LibraryIndexer(store: store, extractor: StandardMetadataReader(), options: options)
         self.indexer = indexer
-        let packs = ThumbnailPackStore(store: store)
+        var packOptions = ThumbnailPackOptions()
+        if let thumbnailCacheByteLimit { packOptions.cacheByteLimit = thumbnailCacheByteLimit }
+        let packs = ThumbnailPackStore(store: store, options: packOptions)
         self.packs = packs
         let generator = ThumbnailGenerator(
             store: store, packs: packs, scheduler: { indexer.scheduler(for: $0) }, video: StandardVideoThumbnailer())
@@ -122,6 +130,21 @@ public final class BrowserLibrary {
         Task.detached(priority: .utility) { _ = MpvEngine.isAvailable }
         await refresh()
         await connectVolumes()
+    }
+
+    // MARK: Thumbnail cache
+
+    /// How much the thumbnail cache takes on the internal disk. Nil if the library can't say.
+    nonisolated func thumbnailCacheByteCount() async -> Int64? {
+        try? await packs.cacheByteCount()
+    }
+
+    /// Settings changed the limit. A lower one evicts at once, off the main thread, and this returns when
+    /// it's done.
+    func setThumbnailCacheByteLimit(_ limit: Int64) async {
+        let packs = packs
+        packs.setCacheByteLimit(limit)
+        await Task.detached(priority: .utility) { try? await packs.enforceLimit() }.value
     }
 
     /// What the viewer plays a video from. Nil when its volume is offline. Reads the library only.
@@ -202,6 +225,7 @@ public final class BrowserLibrary {
             case .completed:
                 break
             }
+            if let report { noteAccess(report) }
             await refresh()
             if let scan = report?.scan, scan.added + scan.modified + scan.removed > 0 || report?.processed != 0 {
                 onContentChanged?()
@@ -241,6 +265,7 @@ public final class BrowserLibrary {
             if summaries != volumes { volumes = summaries }
             let found = try await store.folders()
             if found != folders { folders = found }
+            if !hasLoadedFolders { hasLoadedFolders = true }
             if !hasLoadedExpansion {
                 hasLoadedExpansion = true
                 expandedFolders = try await store.expandedFolders()
@@ -315,6 +340,7 @@ public final class BrowserLibrary {
                     Task { @MainActor in self.show(progress) }
                 }
                 activity = Self.describe(report)
+                noteAccess(report)
                 await refresh()
                 refreshVolumes()
                 onContentChanged?()
@@ -328,6 +354,13 @@ public final class BrowserLibrary {
             interruptedRescans.removeAll()
             for (volume, mount) in interrupted { startRescan(volume, mount: mount) }
         }
+    }
+
+    private func noteAccess(_ report: IndexReport) {
+        guard report.outcome == .completed, let volume = report.volumeID else { return }
+        let denied = report.scan.isRootDenied
+        guard denied != deniedVolumes.contains(volume) else { return }
+        if denied { deniedVolumes.insert(volume) } else { deniedVolumes.remove(volume) }
     }
 
     private func show(_ progress: IndexProgress) {
@@ -363,6 +396,8 @@ public final class BrowserLibrary {
 
     private static func describe(_ report: IndexReport) -> String {
         switch report.outcome {
+        case .completed where report.scan.isRootDenied:
+            return "macOS didn't allow Photon to read this folder."
         case .completed:
             let changed = report.scan.added + report.scan.modified + report.scan.removed
             return "Done. \(changed) changed, \(report.scan.unchanged) unchanged, \(report.processed) read."

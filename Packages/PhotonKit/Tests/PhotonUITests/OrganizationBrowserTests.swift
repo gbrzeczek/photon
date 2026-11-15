@@ -169,6 +169,10 @@ struct OrganizationBrowserTests {
             let details = try #require(try await browser.library.store.details(of: third))
             #expect(details.tags.map(\.name) == ["Kept"])
             #expect(details.locations.first?.path.directory == "Root/Sub")
+            // The sidebar's tags reload after the result lands, so a loaded machine can look too early.
+            for _ in 0..<500 where browser.library.tags.map(\.name) != ["Kept"] {
+                try await Task.sleep(for: .milliseconds(20))
+            }
             #expect(browser.library.tags.map(\.name) == ["Kept"])
             browser.model.toggleInspector()
             #expect(!browser.model.isInspectorShown)

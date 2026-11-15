@@ -24,6 +24,8 @@ final class TileVideoPreview {
 
     /// How long the pointer must rest before anything is read.
     var delay: Duration = .milliseconds(600)
+    /// The switch in Settings. Off, nothing starts, and a pointer moving over a playing preview stops it.
+    var isEnabled: @MainActor () -> Bool = { true }
     /// Reduce Motion turns previews off. Tests set this rather than rely on the machine.
     var reducesMotionForTesting: Bool?
     private var reducesMotion: Bool {
@@ -43,6 +45,10 @@ final class TileVideoPreview {
 
     /// The pointer is over `tile`, which shows a video. A pointer still on the same tile changes nothing.
     func hover(asset: AssetID, instance: FileInstanceID, tile: TileLayer) {
+        guard isEnabled() else {
+            stop()
+            return
+        }
         guard asset != self.asset || tile !== self.tile else { return }
         stop()
         guard !reducesMotion else { return }

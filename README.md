@@ -4,6 +4,13 @@ A fast, native macOS browser for photos and videos in your own folders and on re
 
 > **Status: early development.** Early builds are on [GitHub Releases](https://github.com/gbrzeczek/photon/releases), made from every change to `main`. This README describes what Photon is being built to do. Follow progress in the [implementation plan](docs/PLAN.md).
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/grid-dark.png">
+  <img alt="Photon's grid of photos, with the sidebar of library, albums and folders" src="docs/screenshots/grid-light.png">
+</picture>
+
+The photos in these screenshots are drawn by `scripts/screenshots/make.sh`, so the repository holds no real ones.
+
 ## Why Photon
 
 Apple's Photos app is polished, but it wants to own your library. Finder sees your folders, but it isn't built for browsing thousands of photos. Photon aims for the look and feel of Photos, working directly on the files you already have, wherever they are.
@@ -56,10 +63,26 @@ Download the DMG from the [latest release](https://github.com/gbrzeczek/photon/r
 
 These builds are self-signed, not notarized by Apple, so macOS blocks the first launch. To open one, try launching Photon, then go to **System Settings → Privacy & Security** and click **Open Anyway**.
 
+## Getting started
+
+Click **Add Folder…**, or drag a folder onto the window. When the folder is on an external drive, macOS asks whether Photon may read removable volumes: click **Allow**. If it was refused, the status bar says so and opens the right page of System Settings, under **Privacy & Security → Files & Folders**.
+
+<p>
+  <img alt="The welcome window, with Add Folder" src="docs/screenshots/welcome-light.png" width="49%">
+  <img alt="A photo in the viewer" src="docs/screenshots/viewer-dark.png" width="49%">
+</p>
+
+**Help → Keyboard Shortcuts** lists every shortcut. **Photon → Settings** (Command-Comma) chooses how new folders open, whether tiles keep each photo's shape, whether videos play when the pointer rests on them, and how much space thumbnails may take. The library and its thumbnails stay on your Mac, and Photon never writes its own files to your drives.
+
+<p>
+  <img alt="Settings" src="docs/screenshots/settings-light.png" width="40%">
+  <img alt="The Keyboard Shortcuts window" src="docs/screenshots/shortcuts-light.png" width="58%">
+</p>
+
 ## Contributing
 
 [AGENTS.md](AGENTS.md) describes the project's rules and conventions, for both people and AI agents.
 
 ## License
 
-To be decided.
+To be decided. Photon includes GRDB under the MIT license, and its video fallback includes mpv, FFmpeg and their libraries under the LGPL and other open-source licenses. **Help → Acknowledgements** in the app shows each license.

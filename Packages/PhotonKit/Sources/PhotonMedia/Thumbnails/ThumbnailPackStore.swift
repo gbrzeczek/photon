@@ -27,11 +27,13 @@ public final class ThumbnailPackStore: Sendable {
     private let writer: PackWriter
     private let handles = Mutex<[Int64: PackHandle]>([:])
     private let usedPacks = Mutex<Set<Int64>>([])
+    private let cacheByteLimit: Mutex<Int64>
 
     /// Packs live beside the library, which is always on the internal disk.
     public init(store: LibraryStore, options: ThumbnailPackOptions = ThumbnailPackOptions()) {
         self.store = store
         self.options = options
+        cacheByteLimit = Mutex(options.cacheByteLimit)
         directory = store.databaseURL.deletingLastPathComponent().appending(path: "Thumbnails", directoryHint: .isDirectory)
         writer = PackWriter(store: store, directory: directory, limit: options.packByteLimit)
     }
@@ -74,6 +76,16 @@ public final class ThumbnailPackStore: Sendable {
 
     // MARK: Eviction
 
+    /// Settings changes this. A lower limit takes effect at the next `enforceLimit`.
+    public func setCacheByteLimit(_ limit: Int64) {
+        cacheByteLimit.withLock { $0 = limit }
+    }
+
+    /// What every pack holds together, unused bytes included, as the limit counts it.
+    public func cacheByteCount() async throws -> Int64 {
+        try await store.thumbnailPacks().reduce(0) { $0 + $1.byteCount }
+    }
+
     /// Deletes packs nothing refers to, then evicts large packs until the cache fits its limit: the
     /// least recently used first, and those holding favorites last. Small packs are never evicted.
     public func enforceLimit() async throws {
@@ -88,14 +100,15 @@ public final class ThumbnailPackStore: Sendable {
 
         let packs = try await store.thumbnailPacks()
         var total = packs.reduce(0) { $0 + $1.byteCount }
-        guard total > options.cacheByteLimit else { return }
+        let limit = cacheByteLimit.withLock { $0 }
+        guard total > limit else { return }
         let candidates = packs
             .filter { $0.tier == .large && !open.contains($0.id) }
             .sorted {
                 let (left, right) = ($0.favoriteCount > 0, $1.favoriteCount > 0)
                 return left != right ? !left : $0.lastUsedAt < $1.lastUsedAt
             }
-        for pack in candidates where total > options.cacheByteLimit {
+        for pack in candidates where total > limit {
             try await remove(pack.id)
             total -= pack.byteCount
         }

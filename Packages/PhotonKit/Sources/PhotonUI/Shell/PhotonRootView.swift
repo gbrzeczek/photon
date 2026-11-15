@@ -11,6 +11,8 @@ extension FocusedValues {
 public struct PhotonRootView: View {
     @State private var state: LoadState = .loading
     @State private var quitObserver: (any NSObjectProtocol)?
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
     private let launch: LaunchSettings
 
     private enum LoadState {
@@ -35,6 +37,20 @@ public struct PhotonRootView: View {
         }
         .frame(minWidth: 640, minHeight: 400)
         .task { await load() }
+        .task { openDevelopmentWindow() }
+    }
+
+    /// `PHOTON_OPEN_WINDOW`, for looking at the other windows the way `PHOTON_SNAPSHOT` looks at this one.
+    private func openDevelopmentWindow() {
+        switch ProcessInfo.processInfo.environment["PHOTON_OPEN_WINDOW"] {
+        case "settings": openSettings()
+        case "storage":
+            SettingsPane.initial = .storage
+            openSettings()
+        case let id? where id == PhotonWindowID.keyboardShortcuts || id == PhotonWindowID.acknowledgements:
+            openWindow(id: id)
+        default: break
+        }
     }
 
     private func load() async {
@@ -43,11 +59,15 @@ public struct PhotonRootView: View {
         let url = launch.libraryURL
         do {
             let handle = try await Task.detached(priority: .userInitiated) { try BrowserLibrary.open(url: url) }.value
-            let library = BrowserLibrary(handle, ejectScope: launch.ejectScope)
-            let model = BrowserModel(library: library)
-            model.setLayoutMode(launch.layoutMode)
+            let settings = AppSettings.shared
+            let library = BrowserLibrary(
+                handle, ejectScope: launch.ejectScope, thumbnailCacheByteLimit: settings.thumbnailCacheByteLimit)
+            let model = BrowserModel(library: library, settings: settings)
+            settings.browser = model
+            if let layout = launch.layoutMode { model.setLayoutMode(layout) }
             // The last session comes first: it's what launch is measured by, and it needs no volumes.
-            let restored = await model.restoreLastSession(opensViewer: launch.restoresViewer)
+            let restored = await model.restoreLastSession(
+                opensViewer: launch.restoresViewer && settings.reopensViewer)
             state = .ready(library, model)
             quitObserver = NotificationCenter.default.addObserver(
                 forName: NSApplication.willTerminateNotification, object: nil, queue: .main
@@ -72,7 +92,8 @@ public struct PhotonRootView: View {
 /// What a launch can override. Tests and measurements use these to stay away from the real library.
 struct LaunchSettings {
     var libraryURL: URL?
-    var layoutMode = TileLayoutMode.square
+    /// Nil keeps what Settings says.
+    var layoutMode: TileLayoutMode?
     /// Disk images only, unless nothing about this launch says it's a test or a measurement. Whoever
     /// sets `PHOTON_LIBRARY` is running the app for a reason of their own, and a real drive mustn't be
     /// within its reach.
@@ -82,7 +103,13 @@ struct LaunchSettings {
 
     init(environment: [String: String] = ProcessInfo.processInfo.environment) {
         libraryURL = environment["PHOTON_LIBRARY"].map { URL(fileURLWithPath: $0) }
-        if environment["PHOTON_LAYOUT"] == "aspect" { layoutMode = .aspect }
+        switch environment["PHOTON_LAYOUT"] {
+        case "aspect": layoutMode = .aspect
+        case "square": layoutMode = .square
+        default:
+            // Measurements compare like with like, whatever the last development run chose.
+            if environment["PHOTON_PERF_OUT"] != nil { layoutMode = .square }
+        }
         if environment["PHOTON_NO_VIEWER_RESTORE"] != nil || environment["PHOTON_PERF_OUT"] != nil {
             restoresViewer = false
         }
@@ -134,15 +161,8 @@ private struct BrowserShell: View {
     private var detail: some View {
         ZStack {
             BrowserContentRepresentable(model: model)
-            if library.folders.isEmpty, !library.isIndexing {
-                ContentUnavailableView {
-                    Label("No Folders Yet", systemImage: "photo.on.rectangle")
-                } description: {
-                    Text("Add a folder to browse its photos and videos.")
-                } actions: {
-                    Button("Add Folder…", action: chooseFolder)
-                }
-                .background(.background)
+            if library.hasLoadedFolders, library.folders.isEmpty, !library.isIndexing {
+                WelcomeView(addFolder: chooseFolder) { library.addFolder($0) }
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) { StatusBar(library: library, model: model) }
@@ -207,6 +227,8 @@ private struct StatusBar: View {
                 ?? (library.activity.isEmpty ? nil : library.activity)
             {
                 Text(message).lineLimit(1)
+            } else if let denied = deniedVolumeName {
+                AccessNotice(volumeName: denied)
             }
         }
         .font(.callout)
@@ -216,12 +238,42 @@ private struct StatusBar: View {
         .background(.bar)
     }
 
+    /// An online volume macOS wouldn't let Photon read, preferring the one showing.
+    private var deniedVolumeName: String? {
+        let denied = library.deniedVolumes.intersection(library.onlineVolumes)
+        guard let volume = model.scope.map(\.volume).flatMap({ denied.contains($0) ? $0 : nil }) ?? denied.first
+        else { return nil }
+        return library.name(of: volume)
+    }
+
     private var status: String {
         if model.isViewerOpen, !model.viewerStatus.isEmpty { return model.viewerStatus }
         let items = model.itemCount.formatted()
         let noun = model.itemCount == 1 ? "item" : "items"
         return model.selectedCount > 0
             ? "\(model.selectedCount.formatted()) of \(items) selected" : "\(items) \(noun)"
+    }
+}
+
+/// macOS refused to let Photon list a drive, so its photos stay on stored thumbnails until the user allows
+/// it. Only System Settings can change that, so the notice takes them there.
+struct AccessNotice: View {
+    let volumeName: String
+
+    /// Privacy & Security, at Files & Folders, where Removable Volumes is listed for each app.
+    static let settingsURL = URL(
+        string: "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders")!
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Label("Photon isn't allowed to read “\(volumeName)”", systemImage: "hand.raised")
+                .lineLimit(1)
+            Button("Open Privacy Settings…") { NSWorkspace.shared.open(Self.settingsURL) }
+                .buttonStyle(.link)
+                .help("Allow Photon under Files & Folders, then reconnect the drive")
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("photon.access")
     }
 }
 
@@ -439,6 +491,7 @@ public struct PhotonCommands: Commands {
     }
 
     public var body: some Commands {
+        HelpCommands()
         CommandGroup(after: .newItem) {
             Button("New Album…") {
                 if let name = NamePrompt.ask("New Album", message: "", initial: "Untitled Album", action: "Create") {

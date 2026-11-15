@@ -125,6 +125,7 @@ struct ScannerTests {
         let report = try await fixture.scanner.scan(root: "")
 
         #expect(report.unreadableDirectories == 1)
+        #expect(!report.isRootDenied)
         #expect(report.removed == 0)
         #expect(try await fixture.names(in: "locked/sub") == ["b.jpg"])
     }
