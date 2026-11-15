@@ -6,6 +6,8 @@ on:
   pull_request:
     paths:
       - scripts/release/**
+      - scripts/mpv/**
+      - .github/actions/libmpv/**
       - .github/workflows/release.yml
       - .github/workflows/release-check.yml
       - Photon.xcodeproj/**
@@ -20,12 +22,16 @@ concurrency:
 jobs:
   build-dmg:
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 90
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v7
+
+      # The fallback engine for MKV, WebM, AVI and the rest. build-dmg.sh refuses to build without it.
+      - name: Get libmpv
+        uses: ./.github/actions/libmpv
 
       - name: Make a throwaway certificate
         run: |

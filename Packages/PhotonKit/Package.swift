@@ -21,11 +21,16 @@ let package = Package(
         .target(name: "PhotonCore", dependencies: [.product(name: "GRDB", package: "GRDB.swift")]),
         .target(name: "PhotonIndex", dependencies: ["PhotonCore"]),
         .target(name: "PhotonMedia", dependencies: ["PhotonCore", "PhotonIndex"]),
-        .target(name: "PhotonVideo", dependencies: ["PhotonMedia"]),
+        // libmpv's headers only. PhotonVideo loads Photon's own build at run time, from the app's
+        // Frameworks folder, so nothing here links it.
+        .target(name: "CMpv"),
+        .target(name: "PhotonVideo", dependencies: ["PhotonMedia", "CMpv"]),
         .target(name: "PhotonUI", dependencies: ["PhotonCore", "PhotonIndex", "PhotonMedia", "PhotonVideo"]),
 
         // Writes synthetic media for tests and for the development tool. Never part of the app.
-        .target(name: "PhotonTestSupport", dependencies: ["PhotonCore", "PhotonIndex"]),
+        .target(
+            name: "PhotonTestSupport", dependencies: ["PhotonCore", "PhotonIndex"],
+            resources: [.copy("FallbackClips")]),
         .executableTarget(
             name: "photon-index",
             dependencies: ["PhotonCore", "PhotonIndex", "PhotonMedia", "PhotonVideo", "PhotonTestSupport"]),

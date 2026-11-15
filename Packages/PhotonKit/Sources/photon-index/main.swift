@@ -22,7 +22,8 @@ let usage = """
     thumbnails makes every thumbnail for a folder that has been scanned, reading it the way scan does.
     seed writes a library with no real files, for measuring the grid. Its volume is always offline.
     scan refuses an external volume unless it's mounted read-only.
-    videos writes the format test set: one real, playable clip per format AVFoundation writes.
+    videos writes the format test set: one real, playable clip per format AVFoundation writes, and the
+    fallback's clips in MKV, WebM, AVI and the other formats only mpv plays.
     generate and videos only write to the internal disk or a disk image.
     """
 
@@ -77,7 +78,7 @@ func runScan(path: String) async throws {
     print("Volume: \(mount.filesystem), \(mount.location.rawValue), read-only: \(mount.isReadOnly)")
 
     let store = try openStore()
-    let indexer = LibraryIndexer(store: store, extractor: MediaMetadataReader())
+    let indexer = LibraryIndexer(store: store, extractor: StandardMetadataReader())
     // Run on the main run loop, which async main keeps running, so an unmount stops the work.
     let monitor = VolumeEventMonitor(
         center: NSWorkspace.shared.notificationCenter,
@@ -142,7 +143,14 @@ func runVideos(path: String) async throws {
         let name = "\(format.codec.rawValue)-\(format.fileExtension).\(format.fileExtension)"
         try await SyntheticVideo.write(to: root.appending(path: name), format: format, options: options)
     }
-    print("\(SyntheticVideo.Format.avFoundationSet.count) videos")
+    // The fallback's clips, which only mpv plays, are committed rather than written, because nothing
+    // here can encode them.
+    for clip in FallbackClip.allCases {
+        let destination = root.appending(path: "fallback-\(clip.fileName)")
+        try? FileManager.default.removeItem(at: destination)
+        try FileManager.default.copyItem(at: clip.url, to: destination)
+    }
+    print("\(SyntheticVideo.Format.avFoundationSet.count + FallbackClip.allCases.count) videos")
 }
 
 func runThumbnails(path: String) async throws {
@@ -150,7 +158,7 @@ func runThumbnails(path: String) async throws {
     if let reason = MountPolicy.refusalReason(for: mount) { fail("Refused: \(reason)") }
     print("Volume: \(mount.filesystem), \(mount.location.rawValue), read-only: \(mount.isReadOnly)")
     let store = try openStore()
-    let indexer = LibraryIndexer(store: store, extractor: MediaMetadataReader())
+    let indexer = LibraryIndexer(store: store, extractor: StandardMetadataReader())
     let monitor = VolumeEventMonitor(
         center: NSWorkspace.shared.notificationCenter,
         willUnmount: { indexer.volumeWillUnmount(mountPoint: $0) },
@@ -158,7 +166,7 @@ func runThumbnails(path: String) async throws {
     let volume = try await indexer.connect(mount: mount)
     let packs = ThumbnailPackStore(store: store)
     let generator = ThumbnailGenerator(
-        store: store, packs: packs, scheduler: { indexer.scheduler(for: $0) }, video: AVFoundationThumbnailer())
+        store: store, packs: packs, scheduler: { indexer.scheduler(for: $0) }, video: StandardVideoThumbnailer())
 
     let run = Task { try await generator.runBackground(volume: volume) }
     signal(SIGINT, SIG_IGN)

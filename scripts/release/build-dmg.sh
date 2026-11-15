@@ -52,6 +52,15 @@ if [ -z "$MARKETING_VERSION" ]; then
 fi
 VERSION="$MARKETING_VERSION.$BUILD_NUMBER"
 
+# The libmpv fallback for MKV, WebM, AVI and the rest, from scripts/mpv/build.sh. The app runs
+# without it, but a release without it would quietly lose formats, so it's required here.
+for dylib in "$ROOT"/Vendor/mpv/lib/libmpv.2.dylib "$ROOT"/Vendor/mpv/lib/libavcodec.*.dylib; do
+  if [ ! -f "$dylib" ]; then
+    echo "error: no libmpv in Vendor/mpv. Run ARCHS=\"arm64 x86_64\" scripts/mpv/build.sh first." >&2
+    exit 1
+  fi
+done
+
 # Xcode doesn't sign: a self-signed certificate isn't trusted on the build machine, and codesign
 # accepts it when given the fingerprint and keychain. Building for the generic destination makes a
 # universal binary, for Apple silicon and Intel Macs.
@@ -99,6 +108,19 @@ for arch in arm64 x86_64; do
     exit 1
   fi
 done
+# Every dylib in Frameworks, libmpv's included, carries both architectures, as the app does.
+for dylib in "$APP"/Contents/Frameworks/*.dylib; do
+  for arch in arm64 x86_64; do
+    if ! lipo -archs "$dylib" | grep -qw "$arch"; then
+      echo "error: $(basename "$dylib") has no $arch slice." >&2
+      exit 1
+    fi
+  done
+done
+if [ ! -f "$APP/Contents/Frameworks/libmpv.2.dylib" ]; then
+  echo "error: Photon.app doesn't carry libmpv." >&2
+  exit 1
+fi
 PLIST_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist")"
 if [ "$PLIST_VERSION" != "$BUILD_NUMBER" ]; then
   echo "error: CFBundleVersion is $PLIST_VERSION, not $BUILD_NUMBER." >&2

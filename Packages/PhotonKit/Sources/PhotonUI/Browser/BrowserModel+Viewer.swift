@@ -75,11 +75,31 @@ extension BrowserModel: ViewerHost {
 
     func viewerRect(row: Int) -> CGRect? { viewer.flatMap { active?.tileRect(row: row, in: $0) } }
     func viewerHideTile(row: Int?) { active?.hideTile(row: row) }
-    func viewerDidFinishClosing() { viewerStatus = "" }
+    func viewerDidFinishClosing() {
+        viewerStatus = ""
+        viewerVideoDidChange(VideoMenuState(isMuted: videoMenu.isMuted))
+    }
 
     func viewerStatusDidChange(_ status: String) {
         if status != viewerStatus { viewerStatus = status }
     }
+
+    func viewerVideoDidChange(_ state: VideoMenuState) {
+        if state != videoMenu { videoMenu = state }
+    }
+
+    // MARK: The Video menu
+
+    /// Space, from the menu. Space itself can't be the menu's shortcut, because the menu would take it
+    /// from the search field.
+    public func togglePlayback() { viewerVideo?.togglePlay() }
+    /// Shift-Left and Shift-Right, from the menu.
+    public func skipVideo(forward: Bool) { viewerVideo?.seek(by: forward ? 5 : -5) }
+    /// M, from the menu.
+    public func toggleVideoMute() { viewerVideo?.toggleMute() }
+    /// `[`, `]` and `=`, from the menu.
+    public func stepVideoSpeed(faster: Bool) { viewerVideo?.stepSpeed(faster: faster) }
+    public func resetVideoSpeed() { viewerVideo?.setSpeed(1) }
 
     /// The name comes from the library, so it needs no disk and works offline.
     func viewerDidSettle(row: Int) {

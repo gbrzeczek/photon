@@ -99,6 +99,8 @@ public final class BrowserModel {
     public internal(set) var isViewerOpen = false
     /// What the status bar says while the viewer is open. Waits for a held key, like the disk does.
     public internal(set) var viewerStatus = ""
+    /// For the Video menu. Set only when it changes, which a playing video's time doesn't do.
+    public internal(set) var videoMenu = VideoMenuState()
     /// The name and date of the photo in the viewer, for the window's title. Waits for a held key too.
     public internal(set) var viewerCaption: ViewerCaption?
     /// Something worth a line in the status bar, such as what a copy left out.

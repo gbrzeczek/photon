@@ -513,7 +513,37 @@ public struct PhotonCommands: Commands {
         CommandMenu("Image") {
             if let model { ImageMenuItems(model: model) }
         }
+        CommandMenu("Video") {
+            if let model { VideoMenuItems(model: model) }
+        }
         SidebarCommands()
+    }
+}
+
+/// The Video menu, for the video in the viewer. Its keys are the viewer's, not the menu's: Space, M,
+/// the brackets and Shift-arrows would be taken from the search field if they were menu shortcuts, so
+/// the titles name them instead.
+private struct VideoMenuItems: View {
+    let model: BrowserModel
+
+    var body: some View {
+        let state = model.videoMenu
+        Button(state.isPlaying ? "Pause    Space" : "Play    Space") { model.togglePlayback() }
+            .disabled(!state.isReady)
+        Button("Skip Back 5 Seconds    ⇧←") { model.skipVideo(forward: false) }
+            .disabled(!state.isReady)
+        Button("Skip Forward 5 Seconds    ⇧→") { model.skipVideo(forward: true) }
+            .disabled(!state.isReady)
+        Divider()
+        Button(state.isMuted ? "Unmute    M" : "Mute    M") { model.toggleVideoMute() }
+            .disabled(!state.isReady)
+        Divider()
+        Button("Slower    [") { model.stepVideoSpeed(faster: false) }
+            .disabled(!state.isReady || state.speed <= 0.25)
+        Button("Faster    ]") { model.stepVideoSpeed(faster: true) }
+            .disabled(!state.isReady || state.speed >= 2)
+        Button("Normal Speed    =") { model.resetVideoSpeed() }
+            .disabled(!state.isReady || state.speed == 1)
     }
 }
 

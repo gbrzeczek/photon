@@ -28,7 +28,7 @@ jobs:
         && github.event.workflow_run.head_branch == 'main')
       || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 90
     defaults:
       run:
         # Adds pipefail, which the default shell leaves out.
@@ -46,6 +46,10 @@ jobs:
         run: |
           sw_vers
           xcodebuild -version
+
+      # The fallback engine for MKV, WebM, AVI and the rest. build-dmg.sh refuses to build without it.
+      - name: Get libmpv
+        uses: ./.github/actions/libmpv
 
       - name: Choose the build number
         id: build

@@ -23,6 +23,8 @@ protocol ViewerHost: AnyObject {
     func viewerHideTile(row: Int?)
     func viewerDidFinishClosing()
     func viewerStatusDidChange(_ status: String)
+    /// What the Video menu shows: whether a video is ready, playing and muted.
+    func viewerVideoDidChange(_ state: VideoMenuState)
     /// The photo showing has stayed long enough to name, which a held key's skipped photos don't.
     func viewerDidSettle(row: Int)
     func viewerKey(_ event: NSEvent) -> Bool
@@ -638,7 +640,10 @@ final class ViewerView: NSView, NSDraggingSource {
         }
     }
 
-    private func applyStatus() { host?.viewerStatusDidChange(statusText) }
+    private func applyStatus() {
+        host?.viewerStatusDidChange(statusText)
+        host?.viewerVideoDidChange(isOpen && isVideo ? video.menuState : VideoMenuState(isMuted: video.isMuted))
+    }
 
     /// Reads the position for VoiceOver, and gives UI tests something to check.
     private func updateAccessibility() {
