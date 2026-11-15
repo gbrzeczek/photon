@@ -248,7 +248,10 @@ struct VideoViewerTests {
         browser.model.openViewer()
         #expect(try await until { browser.video.status == .ready })
         #expect(browser.video.problem == nil)
-        #expect(String(describing: type(of: try #require(browser.video.playback))).contains("Mpv"))
+        // Some Macs decode VP9 in AVFoundation, CI's virtual ones among them, so it plays with no handover.
+        // Where AVFoundation can't, a broken handover leaves it unsupported, never ready.
+        let engine = String(describing: type(of: try #require(browser.video.playback)))
+        #expect(engine.contains("Mpv") || engine.contains("AVFoundation"), "\(engine)")
     }
 
     @Test("Speed keys and the menu set what Space plays at, volume carries, and skipping seeks")
